@@ -69,4 +69,19 @@ public class GraphService {
             log.error("=== NEO4J: FAILED - {}", e.getMessage(), e);
         }
     }
+
+    public void updateCompanyRiskScore(String companyId, Double riskScore) {
+        try {
+            log.info("=== NEO4J: Updating risk score for company ID: {} to {}", companyId, riskScore);
+            neo4jClient.query(
+                    "MATCH (c:Company {id: $id}) " +
+                    "SET c.riskScore = $riskScore"
+            ).bindAll(Map.of(
+                    "id", companyId,
+                    "riskScore", riskScore
+            )).run();
+        } catch (Exception e) {
+            log.error("=== NEO4J: FAILED updating risk score - {}", e.getMessage(), e);
+        }
+    }
 }

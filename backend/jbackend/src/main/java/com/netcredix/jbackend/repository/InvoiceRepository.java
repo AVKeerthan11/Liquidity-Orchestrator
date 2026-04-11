@@ -12,4 +12,6 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
 
     @Query("SELECT i FROM Invoice i WHERE i.supplier.id = :companyId OR i.buyer.id = :companyId")
     List<Invoice> findByCompanyId(@Param("companyId") UUID companyId);
+
+    List<Invoice> findByBuyerId(UUID buyerId);
 }
