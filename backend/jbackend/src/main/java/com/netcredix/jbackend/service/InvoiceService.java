@@ -45,15 +45,31 @@ public class InvoiceService {
         invoice = invoiceRepository.save(invoice);
         final Invoice savedInvoice = invoice;
 
-        // Run Neo4j sync after JPA transaction commits to avoid cross-store conflicts
+        final String supplierIdStr = savedInvoice.getSupplier().getId().toString();
+        final String supplierNameStr = savedInvoice.getSupplier().getName();
+        final String supplierTypeStr = savedInvoice.getSupplier().getType().name();
+        final String buyerIdStr = savedInvoice.getBuyer().getId().toString();
+        final String buyerNameStr = savedInvoice.getBuyer().getName();
+        final String buyerTypeStr = savedInvoice.getBuyer().getType().name();
+        final String invoiceIdStr = savedInvoice.getId().toString();
+        final String amountStr = savedInvoice.getAmount().toPlainString();
+        final String dueDateStr = savedInvoice.getDueDate().toString();
+        final String statusStr = savedInvoice.getStatus().name();
+
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                try {
-                    graphService.upsertSupplyRelationship(savedInvoice);
-                } catch (Exception e) {
-                    log.error("Neo4j graph sync failed for invoice {}: {}", savedInvoice.getId(), e.getMessage());
-                }
+                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        graphService.upsertSupplyRelationship(
+                            supplierIdStr, supplierNameStr, supplierTypeStr,
+                            buyerIdStr, buyerNameStr, buyerTypeStr,
+                            invoiceIdStr, amountStr, dueDateStr, statusStr
+                        );
+                    } catch (Exception e) {
+                        log.error("Neo4j graph sync failed for invoice {}: {}", invoiceIdStr, e.getMessage());
+                    }
+                });
             }
         });
 
@@ -76,14 +92,31 @@ public class InvoiceService {
         invoice = invoiceRepository.save(invoice);
         final Invoice updatedInvoice = invoice;
 
+        final String supplierIdStr = updatedInvoice.getSupplier().getId().toString();
+        final String supplierNameStr = updatedInvoice.getSupplier().getName();
+        final String supplierTypeStr = updatedInvoice.getSupplier().getType().name();
+        final String buyerIdStr = updatedInvoice.getBuyer().getId().toString();
+        final String buyerNameStr = updatedInvoice.getBuyer().getName();
+        final String buyerTypeStr = updatedInvoice.getBuyer().getType().name();
+        final String invoiceIdStr = updatedInvoice.getId().toString();
+        final String amountStr = updatedInvoice.getAmount().toPlainString();
+        final String dueDateStr = updatedInvoice.getDueDate().toString();
+        final String statusStr = updatedInvoice.getStatus().name();
+
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                try {
-                    graphService.upsertSupplyRelationship(updatedInvoice);
-                } catch (Exception e) {
-                    log.error("Neo4j graph sync failed for invoice {}: {}", updatedInvoice.getId(), e.getMessage());
-                }
+                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        graphService.upsertSupplyRelationship(
+                            supplierIdStr, supplierNameStr, supplierTypeStr,
+                            buyerIdStr, buyerNameStr, buyerTypeStr,
+                            invoiceIdStr, amountStr, dueDateStr, statusStr
+                        );
+                    } catch (Exception e) {
+                        log.error("Neo4j graph sync failed for invoice {}: {}", invoiceIdStr, e.getMessage());
+                    }
+                });
             }
         });
 

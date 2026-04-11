@@ -15,11 +15,11 @@ public class GraphService {
 
     private final Neo4jClient neo4jClient;
 
-    public void upsertSupplyRelationship(Invoice invoice) {
+    public void upsertSupplyRelationship(
+            String supplierId, String supplierName, String supplierType,
+            String buyerId, String buyerName, String buyerType,
+            String invoiceId, String invoiceAmount, String dueDate, String status) {
         try {
-            String supplierId = invoice.getSupplier().getId().toString();
-            String buyerId    = invoice.getBuyer().getId().toString();
-
             log.info("=== NEO4J: Starting graph upsert");
             log.info("=== NEO4J: Supplier ID: {}", supplierId);
             log.info("=== NEO4J: Buyer ID: {}", buyerId);
@@ -31,8 +31,8 @@ public class GraphService {
                     "ON MATCH SET s.name = $name, s.type = $type"
             ).bindAll(Map.of(
                     "id",   supplierId,
-                    "name", invoice.getSupplier().getName(),
-                    "type", invoice.getSupplier().getType().name()
+                    "name", supplierName,
+                    "type", supplierType
             )).run();
             log.info("=== NEO4J: Supplier node result: {}", r1);
 
@@ -43,8 +43,8 @@ public class GraphService {
                     "ON MATCH SET b.name = $name, b.type = $type"
             ).bindAll(Map.of(
                     "id",   buyerId,
-                    "name", invoice.getBuyer().getName(),
-                    "type", invoice.getBuyer().getType().name()
+                    "name", buyerName,
+                    "type", buyerType
             )).run();
             log.info("=== NEO4J: Buyer node result: {}", r2);
 
@@ -56,10 +56,10 @@ public class GraphService {
             ).bindAll(Map.of(
                     "supplierId", supplierId,
                     "buyerId",    buyerId,
-                    "invoiceId",  invoice.getId().toString(),
-                    "amount",     invoice.getAmount().toPlainString(),
-                    "dueDate",    invoice.getDueDate().toString(),
-                    "status",     invoice.getStatus().name()
+                    "invoiceId",  invoiceId,
+                    "amount",     invoiceAmount,
+                    "dueDate",    dueDate,
+                    "status",     status
             )).run();
             log.info("=== NEO4J: Relationship result: {}", r3);
 
