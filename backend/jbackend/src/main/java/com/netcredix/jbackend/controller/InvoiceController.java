@@ -34,7 +34,7 @@ public class InvoiceController {
     }
 
     @PutMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('BUYER', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPPLIER', 'BUYER', 'FINANCIER', 'ADMIN')")
     public ResponseEntity<InvoiceResponse> updateStatus(
             @PathVariable UUID id,
             @Valid @RequestBody InvoiceStatusRequest request) {

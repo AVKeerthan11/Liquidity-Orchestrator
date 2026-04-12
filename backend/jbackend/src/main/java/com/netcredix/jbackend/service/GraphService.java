@@ -7,6 +7,10 @@ import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Collection;
+import com.netcredix.jbackend.dto.CytoscapeResponse;
+import com.netcredix.jbackend.dto.CytoscapeNode;
+import com.netcredix.jbackend.dto.CytoscapeEdge;
 
 @Service
 @RequiredArgsConstructor
@@ -83,5 +87,118 @@ public class GraphService {
         } catch (Exception e) {
             log.error("=== NEO4J: FAILED updating risk score - {}", e.getMessage(), e);
         }
+    }
+
+    public CytoscapeResponse getNetworkForCompany(String companyId) {
+        log.info("=== NEO4J: Fetching network for company ID: {}", companyId);
+        
+        Collection<Map<String, Object>> results = neo4jClient.query(
+                "MATCH (c:Company {id: $id})-[r:SUPPLIES_TO]-(n:Company) " +
+                "RETURN c, r, n"
+        ).bindAll(Map.of("id", companyId)).fetch().all();
+
+        java.util.Map<String, CytoscapeNode> nodeMap = new java.util.HashMap<>();
+        java.util.Map<String, CytoscapeEdge> edgeMap = new java.util.HashMap<>();
+
+        for (Map<String, Object> row : results) {
+            try {
+                Object cNode = row.get("c");
+                Object nNode = row.get("n");
+                Object rel = row.get("r");
+
+                processGenericNode(cNode, nodeMap);
+                processGenericNode(nNode, nodeMap);
+                
+                if (rel != null) {
+                    String sourceId = getSourceId(rel, cNode, nNode);
+                    String targetId = getTargetId(rel, cNode, nNode);
+                    
+                    String invoiceId = extractPropertyString(rel, "invoiceId");
+                    if (invoiceId != null && !edgeMap.containsKey(invoiceId)) {
+                        CytoscapeEdge edge = CytoscapeEdge.builder()
+                                .data(CytoscapeEdge.EdgeData.builder()
+                                        .source(sourceId)
+                                        .target(targetId)
+                                        .amount(extractPropertyDouble(rel, "invoiceAmount"))
+                                        .status(extractPropertyString(rel, "status"))
+                                        .build())
+                                .build();
+                        edgeMap.put(invoiceId, edge);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("=== NEO4J: Error parsing graph row - {}", e.getMessage());
+            }
+        }
+
+        return CytoscapeResponse.builder()
+                .nodes(new java.util.ArrayList<>(nodeMap.values()))
+                .edges(new java.util.ArrayList<>(edgeMap.values()))
+                .build();
+    }
+
+    private void processGenericNode(Object nodeObj, java.util.Map<String, CytoscapeNode> nodeMap) {
+        if (nodeObj == null) return;
+        String id = extractPropertyString(nodeObj, "id");
+        if (id != null && !nodeMap.containsKey(id)) {
+            CytoscapeNode cytoNode = CytoscapeNode.builder()
+                    .data(CytoscapeNode.NodeData.builder()
+                            .id(id)
+                            .label(extractPropertyString(nodeObj, "name"))
+                            .type(extractPropertyString(nodeObj, "type"))
+                            .riskScore(extractPropertyDouble(nodeObj, "riskScore"))
+                            .build())
+                    .build();
+            nodeMap.put(id, cytoNode);
+        }
+    }
+
+    private String getSourceId(Object relObj, Object cNode, Object nNode) {
+        try {
+            if (relObj instanceof org.neo4j.driver.types.Relationship rel && cNode instanceof org.neo4j.driver.types.Node c) {
+                if (rel.startNodeId() == c.id()) return extractPropertyString(cNode, "id");
+                else return extractPropertyString(nNode, "id");
+            }
+        } catch (Exception ignored) {}
+        return extractPropertyString(cNode, "id");
+    }
+
+    private String getTargetId(Object relObj, Object cNode, Object nNode) {
+        try {
+            if (relObj instanceof org.neo4j.driver.types.Relationship rel && cNode instanceof org.neo4j.driver.types.Node c) {
+                if (rel.endNodeId() == c.id()) return extractPropertyString(cNode, "id");
+                else return extractPropertyString(nNode, "id");
+            }
+        } catch (Exception ignored) {}
+        return extractPropertyString(nNode, "id");
+    }
+
+    private String extractPropertyString(Object obj, String key) {
+        if (obj == null) return null;
+        try {
+            if (obj instanceof java.util.Map map) {
+                Object val = map.get(key);
+                return val != null ? val.toString() : null;
+            }
+            if (obj instanceof org.neo4j.driver.types.Entity entity) {
+                return entity.containsKey(key) && !entity.get(key).isNull() ? entity.get(key).asString() : null;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private Double extractPropertyDouble(Object obj, String key) {
+        if (obj == null) return 0.0;
+        try {
+            if (obj instanceof java.util.Map map) {
+                Object val = map.get(key);
+                if (val instanceof Number) return ((Number) val).doubleValue();
+                return val != null ? Double.parseDouble(val.toString()) : 0.0;
+            }
+            if (obj instanceof org.neo4j.driver.types.Entity entity) {
+                return entity.containsKey(key) && !entity.get(key).isNull() ? entity.get(key).asDouble() : 0.0;
+            }
+        } catch (Exception ignored) {}
+        return 0.0;
     }
 }

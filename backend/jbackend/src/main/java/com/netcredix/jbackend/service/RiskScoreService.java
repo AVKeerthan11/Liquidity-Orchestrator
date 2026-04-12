@@ -45,8 +45,13 @@ public class RiskScoreService {
         long overdueInvoices = invoices.stream()
                 .filter(i -> i.getStatus() == InvoiceStatus.OVERDUE)
                 .count();
-                
-        return ((double) overdueInvoices / invoices.size()) * 40.0;
+
+        if (overdueInvoices == 0) {
+            return 0.0;
+        }
+
+        double ratioPenalty = ((double) overdueInvoices / invoices.size()) * 20.0;
+        return 65.0 + ratioPenalty + (overdueInvoices * 5.0);
     }
 
     private double calculateAvgDelayDays(List<Payment> payments) {
