@@ -1,6 +1,7 @@
 package com.netcredix.jbackend.repository;
 
 import com.netcredix.jbackend.model.Invoice;
+import com.netcredix.jbackend.model.InvoiceStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,4 +15,6 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
     List<Invoice> findByCompanyId(@Param("companyId") UUID companyId);
 
     List<Invoice> findByBuyerId(UUID buyerId);
+
+    List<Invoice> findBySupplierIdAndStatusIn(UUID supplierId, List<InvoiceStatus> statuses);
 }
