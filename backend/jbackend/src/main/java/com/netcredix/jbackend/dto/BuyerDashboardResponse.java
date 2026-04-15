@@ -16,4 +16,11 @@ public class BuyerDashboardResponse {
     private BigDecimal totalOutstandingPayables;
     private List<AlertResponse> criticalAlerts;
     private CytoscapeResponse supplierNetwork;
+
+    // Contagion fields from SEIR model
+    private Double r0Score;
+    private String contagionStatus;
+    private String contagionInterpretation;
+    private Integer infectedSuppliers;
+    private Integer exposedSuppliers;
 }

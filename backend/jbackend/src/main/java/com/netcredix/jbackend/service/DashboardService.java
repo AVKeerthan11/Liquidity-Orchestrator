@@ -21,6 +21,7 @@ public class DashboardService {
     private final AlertRepository alertRepository;
     private final FinancingOfferRepository financingOfferRepository;
     private final GraphService graphService;
+    private final MLService mlService;
 
     @Transactional
     public SupplierDashboardResponse getSupplierDashboard(UUID companyId) {
@@ -107,6 +108,35 @@ public class DashboardService {
 
         CytoscapeResponse supplierNetwork = graphService.getNetworkForCompany(companyId.toString());
 
+        // ── Contagion simulation via ML service ────────────────────────────────
+        List<String> supplierIdStrings = supplierIds.stream()
+                .map(UUID::toString)
+                .toList();
+
+        Double r0Score = 0.0;
+        String contagionStatus = "UNKNOWN";
+        String contagionInterpretation = "ML service unavailable";
+        Integer infectedSuppliers = 0;
+        Integer exposedSuppliers = 0;
+
+        try {
+            Map<String, Object> contagion = mlService.callContagionSimulation(supplierIdStrings);
+            if (contagion != null) {
+                r0Score             = ((Number) contagion.getOrDefault("r0", 0.0)).doubleValue();
+                contagionStatus     = (String) contagion.getOrDefault("status", "UNKNOWN");
+                contagionInterpretation = (String) contagion.getOrDefault("interpretation", "");
+                Map<?, ?> stats     = (Map<?, ?>) contagion.get("network_stats");
+                if (stats != null) {
+                    Object infected = stats.get("infected");
+                    Object exposed  = stats.get("exposed");
+                    infectedSuppliers = infected != null ? ((Number) infected).intValue() : 0;
+                    exposedSuppliers  = exposed  != null ? ((Number) exposed).intValue()  : 0;
+                }
+            }
+        } catch (Exception e) {
+            // fallback values already set above
+        }
+
         return BuyerDashboardResponse.builder()
                 .companyName(company.getName())
                 .supplyChainHealthScore(supplyChainHealthScore)
@@ -115,6 +145,11 @@ public class DashboardService {
                 .totalOutstandingPayables(totalOutstandingPayables)
                 .criticalAlerts(criticalAlerts)
                 .supplierNetwork(supplierNetwork)
+                .r0Score(r0Score)
+                .contagionStatus(contagionStatus)
+                .contagionInterpretation(contagionInterpretation)
+                .infectedSuppliers(infectedSuppliers)
+                .exposedSuppliers(exposedSuppliers)
                 .build();
     }
 

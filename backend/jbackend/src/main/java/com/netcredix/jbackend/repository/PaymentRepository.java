@@ -8,4 +8,5 @@ import java.util.UUID;
 
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     List<Payment> findByInvoiceBuyerId(UUID companyId);
+    List<Payment> findByInvoiceSupplierId(UUID companyId);
 }
