@@ -1,17 +1,21 @@
 package com.netcredix.jbackend.controller;
 
 import com.netcredix.jbackend.dto.RiskScoreResponse;
+import com.netcredix.jbackend.dto.RiskScoreHistoryResponse;
 import com.netcredix.jbackend.dto.Severity;
 import com.netcredix.jbackend.model.RiskScore;
 import com.netcredix.jbackend.repository.RiskScoreRepository;
+import com.netcredix.jbackend.service.RiskScoreService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,6 +26,7 @@ public class RiskScoreController {
 
     private final RiskScoreRepository riskScoreRepository;
     private final com.netcredix.jbackend.service.RiskScoreScheduler riskScoreScheduler;
+    private final RiskScoreService riskScoreService;
 
     @PostMapping("/calculate/all")
     public ResponseEntity<String> calculateAllScores() {
@@ -53,5 +58,13 @@ public class RiskScoreController {
         } else {
             return Severity.RED;
         }
+    }
+
+    @GetMapping("/history/{companyId}")
+    public ResponseEntity<List<RiskScoreHistoryResponse>> getRiskScoreHistory(
+            @PathVariable UUID companyId,
+            @RequestParam(defaultValue = "30") int days) {
+        List<RiskScoreHistoryResponse> history = riskScoreService.getRiskScoreHistory(companyId, days);
+        return ResponseEntity.ok(history);
     }
 }

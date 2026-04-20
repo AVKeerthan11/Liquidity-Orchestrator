@@ -114,4 +114,17 @@ public class RiskScoreService {
             log.info("Risk score saved for company {}: {}", companyId, score);
         });
     }
+
+    // ── History ────────────────────────────────────────────────────────────────
+
+    public List<com.netcredix.jbackend.dto.RiskScoreHistoryResponse> getRiskScoreHistory(UUID companyId, int days) {
+        LocalDateTime since = LocalDateTime.now().minusDays(days);
+        return riskScoreRepository.findHistoryByCompanyId(companyId, since)
+                .stream()
+                .map(rs -> new com.netcredix.jbackend.dto.RiskScoreHistoryResponse(
+                        rs.getScore(),
+                        rs.getCalculatedAt().toString()
+                ))
+                .toList();
+    }
 }
