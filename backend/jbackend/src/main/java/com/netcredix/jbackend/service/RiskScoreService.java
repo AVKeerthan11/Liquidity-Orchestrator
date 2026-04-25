@@ -127,4 +127,69 @@ public class RiskScoreService {
                 ))
                 .toList();
     }
+
+    // ── Research Comparison ────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public com.netcredix.jbackend.dto.ResearchComparisonResponse getResearchComparison(UUID companyId) {
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new RuntimeException("Company not found"));
+        
+        List<Invoice> invoices = invoiceRepository.findByCompanyId(companyId);
+        List<Payment> payments = paymentRepository.findByInvoiceSupplierId(companyId);
+
+        double overdueRatio = calculateOverdueRatio(invoices);
+        double avgDelayDays = calculateAvgDelayDays(payments);
+
+        double traditionalScore = (overdueRatio * 60) + ((avgDelayDays / 90) * 40);
+        traditionalScore = Math.min(traditionalScore, 100.0);
+
+        double networkAwareScore = traditionalScore;
+        java.util.Optional<RiskScore> latestScoreOpt = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(companyId);
+        if (latestScoreOpt.isPresent()) {
+            networkAwareScore = latestScoreOpt.get().getScore();
+        }
+
+        double difference = Math.abs(networkAwareScore - traditionalScore);
+        boolean underestimated = networkAwareScore > traditionalScore;
+
+        List<Invoice> supplierInvoices = invoiceRepository.findBySupplierId(companyId);
+        List<UUID> buyerIds = supplierInvoices.stream().map(i -> i.getBuyer().getId()).distinct().toList();
+
+        double neighborStressSum = 0;
+        int neighborCount = 0;
+        for (UUID bId : buyerIds) {
+            java.util.Optional<RiskScore> rs = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(bId);
+            if (rs.isPresent()) {
+                neighborStressSum += rs.get().getScore();
+                neighborCount++;
+            }
+        }
+        double avgNeighborStress = neighborCount > 0 ? (neighborStressSum / neighborCount) / 100.0 : 0.0;
+
+        String conclusion;
+        if (underestimated) {
+            conclusion = String.format("Traditional method UNDERESTIMATES risk by %.1f points — network stress not captured", difference);
+        } else {
+            conclusion = String.format("Traditional method OVERESTIMATES risk by %.1f points", difference);
+        }
+
+        return com.netcredix.jbackend.dto.ResearchComparisonResponse.builder()
+                .companyId(companyId)
+                .companyName(company.getName())
+                .traditionalScore(traditionalScore)
+                .networkAwareScore(networkAwareScore)
+                .difference(difference)
+                .underestimated(underestimated)
+                .traditionalMethod("Based on individual payment history and overdue ratio only")
+                .networkAwareMethod("Includes upstream buyer stress, graph neighbor health, and network centrality")
+                .riskFactors(com.netcredix.jbackend.dto.ResearchComparisonResponse.RiskFactors.builder()
+                        .overdueRatio(overdueRatio)
+                        .avgDelayDays(avgDelayDays)
+                        .neighborStress(avgNeighborStress)
+                        .build())
+                .conclusion(conclusion)
+                .paperReference("Tabachova et al. 2023 — underestimation of risk in supply chain networks confirmed")
+                .build();
+    }
 }

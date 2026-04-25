@@ -28,6 +28,53 @@ public class FinancingService {
         Company supplier = companyRepository.findById(supplierId)
                 .orElseThrow(() -> new RuntimeException("Supplier not found"));
 
+        List<FinancingOffer> existingOffers = new ArrayList<>();
+        for (FinancingOffer o : financingOfferRepository.findBySupplierId(supplierId)) {
+            if (o.getStatus() == FinancingStatus.PENDING) {
+                existingOffers.add(o);
+            }
+        }
+
+        if (!existingOffers.isEmpty()) {
+            Map<FinancingType, FinancingOptionResponse> uniqueOptions = new EnumMap<>(FinancingType.class);
+            for (FinancingOffer offer : existingOffers) {
+                if (uniqueOptions.containsKey(offer.getType())) continue;
+
+                FinancingType type = offer.getType();
+                BigDecimal recAmt = offer.getAmount();
+                BigDecimal cost = offer.getCost();
+                BigDecimal origAmt;
+                int speed;
+                BigDecimal prob;
+
+                if (type == FinancingType.EARLY_PAYMENT) {
+                    origAmt = recAmt.add(cost);
+                    speed = 1;
+                    prob = new BigDecimal("0.95");
+                } else if (type == FinancingType.INVOICE_DISCOUNTING) {
+                    origAmt = recAmt.add(cost);
+                    speed = 3;
+                    prob = new BigDecimal("0.85");
+                } else {
+                    origAmt = recAmt;
+                    speed = 5;
+                    prob = new BigDecimal("0.70");
+                }
+
+                BigDecimal score = calculateScore(cost, speed, prob);
+                uniqueOptions.put(type, createOption(type, origAmt, recAmt, cost, speed, prob, score));
+            }
+
+            List<FinancingOptionResponse> mappedOptions = new ArrayList<>(uniqueOptions.values());
+            if (!mappedOptions.isEmpty()) {
+                FinancingOptionResponse recommended = mappedOptions.stream()
+                        .max(Comparator.comparing(FinancingOptionResponse::getRoutingScore))
+                        .orElse(mappedOptions.get(0));
+                recommended.setRecommended(true);
+            }
+            return mappedOptions;
+        }
+
         List<Invoice> invoices = invoiceRepository.findBySupplierIdAndStatusIn(
                 supplierId, List.of(InvoiceStatus.PENDING, InvoiceStatus.OVERDUE));
 

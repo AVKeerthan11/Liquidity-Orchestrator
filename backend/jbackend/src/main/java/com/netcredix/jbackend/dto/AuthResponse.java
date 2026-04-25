@@ -12,4 +12,5 @@ public class AuthResponse {
     private String token;
     private UserRole role;
     private UUID companyId;
+    private String companyName;
 }

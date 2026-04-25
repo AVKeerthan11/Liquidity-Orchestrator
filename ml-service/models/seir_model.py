@@ -136,45 +136,34 @@ class SEIRModel:
     # ── SEIR logic ─────────────────────────────────────────────────────────────
 
     def _state(self, score: float) -> str:
-        if score < 30:
+        if score < 15:
             return "S"
-        elif score <= 60:
+        elif score <= 25:
             return "E"
         return "I"
 
     def _calculate_r0(self, scored: dict, edges: list[tuple]) -> float:
         """
-        R0 = mean over all nodes of:
-             (infected_neighbors / total_neighbors) * TRANSMISSION_RATE
+        R0 = (infected / total) * TRANSMISSION_RATE * network_density_factor
 
-        Only nodes that have at least one neighbor contribute.
+        This approach calculates R0 based on the proportion of infected nodes
+        in the network, amplified by the transmission rate and network connectivity.
         """
-        # Build adjacency: node -> set of neighbor ids
-        adjacency: dict[str, set] = {cid: set() for cid in scored}
-        for supplier_id, buyer_id in edges:
-            if supplier_id in adjacency:
-                adjacency[supplier_id].add(buyer_id)
-            if buyer_id in adjacency:
-                adjacency[buyer_id].add(supplier_id)
+        total = len(scored)
+        if total == 0:
+            return 0.0
 
-        r0_values = []
-        for cid, neighbors in adjacency.items():
-            if not neighbors:
-                continue
-            infected_neighbors = sum(
-                1 for n in neighbors
-                if scored.get(n, {}).get("state") == "I"
-            )
-            node_r0 = (infected_neighbors / len(neighbors)) * TRANSMISSION_RATE
-            r0_values.append(node_r0)
+        infected = sum(1 for v in scored.values() if v["state"] == "I")
+        exposed = sum(1 for v in scored.values() if v["state"] == "E")
 
-        if not r0_values:
-            # No edges — use global infected ratio as proxy
-            total    = len(scored)
-            infected = sum(1 for v in scored.values() if v["state"] == "I")
-            return (infected / total * TRANSMISSION_RATE) if total > 0 else 0.0
+        # Network density factor based on edges per node
+        density_factor = min(len(edges) / max(total, 1), 3.0)
 
-        return sum(r0_values) / len(r0_values)
+        # R0 formula: infected ratio * transmission * density
+        infected_ratio = (infected + 0.5 * exposed) / total
+        r0 = infected_ratio * TRANSMISSION_RATE * max(density_factor, 1.0)
+
+        return r0
 
     def _r0_status(self, r0: float) -> tuple[str, str]:
         if r0 < 1.0:

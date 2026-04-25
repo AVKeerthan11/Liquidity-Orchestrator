@@ -84,13 +84,23 @@ public class DashboardService {
 
         for (UUID sid : supplierIds) {
             RiskScore rs = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(sid).orElse(null);
+            boolean isRiskScoreHigh = false;
             if (rs != null) {
                 totalScore += rs.getScore();
                 suppliersWithScore++;
-                if (rs.getScore() > 60.0) {
-                    atRiskSuppliers++;
+                if (rs.getScore() >= 30.0) {
+                    isRiskScoreHigh = true;
                 }
             }
+
+            long supplierTotalInvoices = invoiceRepository.countBySupplierId(sid);
+            long supplierOverdueInvoices = invoiceRepository.countBySupplierIdAndStatus(sid, InvoiceStatus.OVERDUE);
+            double overdueRatio = supplierTotalInvoices > 0 ? (double) supplierOverdueInvoices / supplierTotalInvoices : 0.0;
+
+            if (isRiskScoreHigh || overdueRatio > 0.20) {
+                atRiskSuppliers++;
+            }
+
             List<Alert> salerts = alertRepository.findByCompanyIdOrderBySeverityDesc(sid);
             for (Alert a : salerts) {
                 if (a.getSeverity() == AlertSeverity.CRITICAL) {

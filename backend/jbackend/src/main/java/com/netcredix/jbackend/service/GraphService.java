@@ -1,16 +1,25 @@
 package com.netcredix.jbackend.service;
 
 import com.netcredix.jbackend.model.Invoice;
+import com.netcredix.jbackend.model.InvoiceStatus;
+import com.netcredix.jbackend.model.RiskScore;
+import com.netcredix.jbackend.repository.InvoiceRepository;
+import com.netcredix.jbackend.repository.RiskScoreRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Service;
 
-import java.util.Map;
-import java.util.Collection;
+import java.math.BigDecimal;
+import java.util.*;
+import java.util.stream.Collectors;
 import com.netcredix.jbackend.dto.CytoscapeResponse;
 import com.netcredix.jbackend.dto.CytoscapeNode;
 import com.netcredix.jbackend.dto.CytoscapeEdge;
+import com.netcredix.jbackend.dto.FsriResponse;
+import com.netcredix.jbackend.dto.FsriSupplier;
+
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -18,6 +27,91 @@ import com.netcredix.jbackend.dto.CytoscapeEdge;
 public class GraphService {
 
     private final Neo4jClient neo4jClient;
+    private final InvoiceRepository invoiceRepository;
+    private final RiskScoreRepository riskScoreRepository;
+
+    @Transactional(readOnly = true)
+    public FsriResponse calculateFsriCascadeRisk(UUID buyerId) {
+        List<Invoice> buyerInvoices = invoiceRepository.findByBuyerId(buyerId);
+
+        long totalInvoicesNetwork = buyerInvoices.size();
+        if (totalInvoicesNetwork == 0) {
+            return FsriResponse.builder().totalNetworkValue(0.0).networkResilienceScore(100.0).suppliers(new ArrayList<>()).build();
+        }
+
+        double totalBuyerExposure = buyerInvoices.stream()
+                .filter(i -> i.getStatus() == InvoiceStatus.PENDING || i.getStatus() == InvoiceStatus.OVERDUE)
+                .map(i -> i.getAmount().doubleValue())
+                .reduce(0.0, Double::sum);
+
+        if (totalBuyerExposure == 0) {
+             return FsriResponse.builder().totalNetworkValue(0.0).networkResilienceScore(100.0).suppliers(new ArrayList<>()).build();
+        }
+
+        Map<UUID, List<Invoice>> supplierToInvoices = buyerInvoices.stream()
+                .collect(Collectors.groupingBy(i -> i.getSupplier().getId()));
+
+        List<FsriSupplier> suppliersList = new ArrayList<>();
+
+        for (Map.Entry<UUID, List<Invoice>> entry : supplierToInvoices.entrySet()) {
+            UUID supplierId = entry.getKey();
+            List<Invoice> supplierInvoices = entry.getValue();
+            
+            String supplierName = supplierInvoices.get(0).getSupplier().getName();
+            
+            double directLoss = supplierInvoices.stream()
+                .filter(i -> i.getStatus() == InvoiceStatus.PENDING || i.getStatus() == InvoiceStatus.OVERDUE)
+                .map(i -> i.getAmount().doubleValue())
+                .reduce(0.0, Double::sum);
+
+            double fsriScore = (directLoss / totalBuyerExposure) * 100.0;
+            
+            double centralityScore = ((double) supplierInvoices.size()) / totalInvoicesNetwork;
+            
+            double riskScoreVal = 0.0;
+            Optional<RiskScore> rsOpt = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(supplierId);
+            if (rsOpt.isPresent()) {
+                riskScoreVal = rsOpt.get().getScore().doubleValue();
+            }
+            
+            String criticalityLevel = "LOW";
+            if (fsriScore > 30) criticalityLevel = "CRITICAL";
+            else if (fsriScore > 20) criticalityLevel = "HIGH";
+            else if (fsriScore > 10) criticalityLevel = "MEDIUM";
+
+            FsriSupplier s = FsriSupplier.builder()
+                .supplierId(supplierId)
+                .supplierName(supplierName)
+                .fsriScore(fsriScore)
+                .directLoss(directLoss)
+                .centralityScore(centralityScore)
+                .riskScore(riskScoreVal)
+                .criticalityLevel(criticalityLevel)
+                .build();
+                
+            suppliersList.add(s);
+        }
+
+        suppliersList.sort((a, b) -> Double.compare(b.getFsriScore(), a.getFsriScore()));
+
+        double top3Sum = 0;
+        int count = 0;
+        for (int i = 0; i < suppliersList.size() && count < 3; i++) {
+            top3Sum += suppliersList.get(i).getFsriScore();
+            count++;
+        }
+        
+        double nrs = 100.0;
+        if (count > 0) {
+            nrs = 100.0 - (top3Sum / 3.0);
+        }
+        
+        return FsriResponse.builder()
+            .totalNetworkValue(totalBuyerExposure)
+            .networkResilienceScore(nrs)
+            .suppliers(suppliersList)
+            .build();
+    }
 
     public void upsertSupplyRelationship(
             String supplierId, String supplierName, String supplierType,

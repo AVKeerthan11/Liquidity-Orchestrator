@@ -17,7 +17,7 @@ public class WhatIfController {
     private final WhatIfService whatIfService;
 
     @PostMapping("/whatif")
-    @PreAuthorize("hasAnyRole('BUYER', 'FINANCIER', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('SUPPLIER', 'BUYER', 'FINANCIER', 'ADMIN')")
     public ResponseEntity<WhatIfResponse> simulate(@Valid @RequestBody WhatIfRequest request) {
         return ResponseEntity.ok(whatIfService.simulate(request));
     }

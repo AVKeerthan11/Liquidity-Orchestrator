@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.netcredix.jbackend.dto.ResearchComparisonResponse;
+import org.springframework.security.access.prepost.PreAuthorize;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,5 +68,11 @@ public class RiskScoreController {
             @RequestParam(defaultValue = "30") int days) {
         List<RiskScoreHistoryResponse> history = riskScoreService.getRiskScoreHistory(companyId, days);
         return ResponseEntity.ok(history);
+    }
+
+    @GetMapping("/research/comparison/{companyId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ResearchComparisonResponse> getResearchComparison(@PathVariable UUID companyId) {
+        return ResponseEntity.ok(riskScoreService.getResearchComparison(companyId));
     }
 }
