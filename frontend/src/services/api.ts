@@ -3,21 +3,15 @@ import { useAuthStore } from '../store/authStore';
 
 const api = axios.create({
   baseURL: 'http://localhost:8081',
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-// Attach JWT token to every request
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Redirect to /login on 401
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -28,5 +22,26 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// ── Typed helpers ──────────────────────────────────────────────────────────────
+
+export const invoiceApi = {
+  getByCompany: (companyId: string) =>
+    api.get(`/api/invoices/company/${companyId}`),
+  create: (payload: Record<string, unknown>) =>
+    api.post('/api/invoices', payload),
+};
+
+export const alertApi = {
+  getActive: (companyId: string) =>
+    api.get(`/api/alerts/active/${companyId}`),
+};
+
+export const financingApi = {
+  getOptions: (companyId: string) =>
+    api.get(`/api/financing/options/${companyId}`),
+  accept: (optionId: string) =>
+    api.post(`/api/financing/accept/${optionId}`),
+};
 
 export default api;

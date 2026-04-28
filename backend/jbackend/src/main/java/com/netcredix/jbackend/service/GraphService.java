@@ -186,49 +186,57 @@ public class GraphService {
     public CytoscapeResponse getNetworkForCompany(String companyId) {
         log.info("=== NEO4J: Fetching network for company ID: {}", companyId);
         
-        Collection<Map<String, Object>> results = neo4jClient.query(
-                "MATCH (c:Company {id: $id})-[r:SUPPLIES_TO]-(n:Company) " +
-                "RETURN c, r, n"
-        ).bindAll(Map.of("id", companyId)).fetch().all();
+        try {
+            Collection<Map<String, Object>> results = neo4jClient.query(
+                    "MATCH (c:Company {id: $id})-[r:SUPPLIES_TO]-(n:Company) " +
+                    "RETURN c, r, n"
+            ).bindAll(Map.of("id", companyId)).fetch().all();
 
-        java.util.Map<String, CytoscapeNode> nodeMap = new java.util.HashMap<>();
-        java.util.Map<String, CytoscapeEdge> edgeMap = new java.util.HashMap<>();
+            java.util.Map<String, CytoscapeNode> nodeMap = new java.util.HashMap<>();
+            java.util.Map<String, CytoscapeEdge> edgeMap = new java.util.HashMap<>();
 
-        for (Map<String, Object> row : results) {
-            try {
-                Object cNode = row.get("c");
-                Object nNode = row.get("n");
-                Object rel = row.get("r");
+            for (Map<String, Object> row : results) {
+                try {
+                    Object cNode = row.get("c");
+                    Object nNode = row.get("n");
+                    Object rel = row.get("r");
 
-                processGenericNode(cNode, nodeMap);
-                processGenericNode(nNode, nodeMap);
-                
-                if (rel != null) {
-                    String sourceId = getSourceId(rel, cNode, nNode);
-                    String targetId = getTargetId(rel, cNode, nNode);
+                    processGenericNode(cNode, nodeMap);
+                    processGenericNode(nNode, nodeMap);
                     
-                    String invoiceId = extractPropertyString(rel, "invoiceId");
-                    if (invoiceId != null && !edgeMap.containsKey(invoiceId)) {
-                        CytoscapeEdge edge = CytoscapeEdge.builder()
-                                .data(CytoscapeEdge.EdgeData.builder()
-                                        .source(sourceId)
-                                        .target(targetId)
-                                        .amount(extractPropertyDouble(rel, "invoiceAmount"))
-                                        .status(extractPropertyString(rel, "status"))
-                                        .build())
-                                .build();
-                        edgeMap.put(invoiceId, edge);
+                    if (rel != null) {
+                        String sourceId = getSourceId(rel, cNode, nNode);
+                        String targetId = getTargetId(rel, cNode, nNode);
+                        
+                        String invoiceId = extractPropertyString(rel, "invoiceId");
+                        if (invoiceId != null && !edgeMap.containsKey(invoiceId)) {
+                            CytoscapeEdge edge = CytoscapeEdge.builder()
+                                    .data(CytoscapeEdge.EdgeData.builder()
+                                            .source(sourceId)
+                                            .target(targetId)
+                                            .amount(extractPropertyDouble(rel, "invoiceAmount"))
+                                            .status(extractPropertyString(rel, "status"))
+                                            .build())
+                                    .build();
+                            edgeMap.put(invoiceId, edge);
+                        }
                     }
+                } catch (Exception e) {
+                    log.warn("=== NEO4J: Error parsing graph row - {}", e.getMessage());
                 }
-            } catch (Exception e) {
-                log.warn("=== NEO4J: Error parsing graph row - {}", e.getMessage());
             }
-        }
 
-        return CytoscapeResponse.builder()
-                .nodes(new java.util.ArrayList<>(nodeMap.values()))
-                .edges(new java.util.ArrayList<>(edgeMap.values()))
-                .build();
+            return CytoscapeResponse.builder()
+                    .nodes(new java.util.ArrayList<>(nodeMap.values()))
+                    .edges(new java.util.ArrayList<>(edgeMap.values()))
+                    .build();
+        } catch (Exception e) {
+            log.warn("=== NEO4J: getNetworkForCompany failed — returning empty graph. Cause: {}", e.getMessage());
+            return CytoscapeResponse.builder()
+                    .nodes(new java.util.ArrayList<>())
+                    .edges(new java.util.ArrayList<>())
+                    .build();
+        }
     }
 
     private void processGenericNode(Object nodeObj, java.util.Map<String, CytoscapeNode> nodeMap) {

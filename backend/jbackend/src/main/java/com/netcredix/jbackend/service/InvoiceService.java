@@ -76,8 +76,9 @@ public class InvoiceService {
         return toResponse(invoice);
     }
 
+    @Transactional(readOnly = true)
     public List<InvoiceResponse> getInvoicesByCompany(UUID companyId) {
-        return invoiceRepository.findByCompanyId(companyId)
+        return invoiceRepository.findByCompanyIdWithCompanies(companyId)
                 .stream()
                 .map(this::toResponse)
                 .toList();

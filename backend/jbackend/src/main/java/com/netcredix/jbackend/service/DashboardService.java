@@ -11,8 +11,11 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import lombok.extern.slf4j.Slf4j;
+
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DashboardService {
 
     private final CompanyRepository companyRepository;
@@ -116,7 +119,16 @@ public class DashboardService {
                 .map(Invoice::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        CytoscapeResponse supplierNetwork = graphService.getNetworkForCompany(companyId.toString());
+        CytoscapeResponse supplierNetwork;
+        try {
+            supplierNetwork = graphService.getNetworkForCompany(companyId.toString());
+        } catch (Exception e) {
+            log.warn("Neo4j unavailable in getBuyerDashboard, using empty graph: {}", e.getMessage());
+            supplierNetwork = CytoscapeResponse.builder()
+                    .nodes(new java.util.ArrayList<>())
+                    .edges(new java.util.ArrayList<>())
+                    .build();
+        }
 
         // ── Contagion simulation via ML service ────────────────────────────────
         List<String> supplierIdStrings = supplierIds.stream()
