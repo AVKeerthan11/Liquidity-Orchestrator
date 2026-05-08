@@ -50,12 +50,14 @@ export interface FinancingOffer {
   // Fields from FinancingOfferResponse (GET /api/dashboard)
   amount?: number;
   cost: number;
-  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'FUNDED';
   createdAt?: string;
   routingScore?: number;
   speedDays?: number;
   probability?: number;
   recommended?: boolean;
+  financierId?: string;
+  financierName?: string;
 }
 
 export interface Invoice {
@@ -68,6 +70,11 @@ export interface Invoice {
   dueDate: string;
   status: 'PENDING' | 'PAID' | 'OVERDUE';
   createdAt: string;
+  payment?: {
+    amountPaid: number;
+    paidOn: string;
+    delayDays: number;
+  };
 }
 
 export interface BuyerSupplier {

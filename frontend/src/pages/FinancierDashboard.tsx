@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
+import { useDashboardStore, isCacheFresh, timeAgo } from '../store/dashboardStore';
 import Sidebar from '../components/layout/Sidebar';
 import type {
   FinancierDashboardData,
@@ -59,14 +60,26 @@ function AlertRow({ alert }: { alert: Alert }) {
   );
 }
 
+// Module-level cache keyed by companyId — survives React unmount/remount
+const _financierCache: Record<string, {
+  dashboard: FinancierDashboardData;
+  alerts: Alert[];
+}> = {};
+
 export default function FinancierDashboard() {
   const companyId = useAuthStore((s) => s.companyId) ?? '';
-  const [dashboard, setDashboard] = useState<FinancierDashboardData | null>(null);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [loading, setLoading] = useState(true);
+  const companyName = useAuthStore((s) => s.companyName) ?? _financierCache?.dashboard?.companyName ?? '...';
+  const cache     = useDashboardStore();
+  const [dashboard, setDashboard] = useState<FinancierDashboardData | null>(
+    _financierCache[companyId]?.dashboard ?? cache.financierData
+  );
+  const [alerts, setAlerts] = useState<Alert[]>(_financierCache[companyId]?.alerts ?? []);
+  const [loading, setLoading] = useState(!_financierCache[companyId] && cache.financierData === null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(new Date());
   const [nodeMap, setNodeMap] = useState<Record<string, string>>({});
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [fundedDeals, setFundedDeals] = useState<any[]>([]);
 
   useEffect(() => {
     api.get<GraphNetwork>('/api/graph/network/b885e67f-609e-44c2-b1e8-04744c5579a4')
@@ -85,24 +98,83 @@ export default function FinancierDashboard() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
+  const fetchData = useCallback((force = false) => {
     if (!companyId) return;
+
+    // Module-level cache hit
+    if (!force && _financierCache[companyId]?.dashboard?.companyName) {
+      console.log('Financier dashboard: serving from module cache for', companyId);
+      setDashboard(_financierCache[companyId].dashboard);
+      setAlerts(_financierCache[companyId].alerts);
+      setLoading(false);
+      return;
+    }
+
+    // Zustand persist cache hit
+    const store = useDashboardStore.getState();
+    if (!force && isCacheFresh(store.financierFetchedAt) && store.financierData?.companyName) {
+      setDashboard(store.financierData);
+      setLastUpdated(store.financierFetchedAt);
+      setLoading(false);
+      return;
+    }
+
+    console.log('Financier dashboard: cache miss — fetching');
     setLoading(true);
-    
-    Promise.allSettled([
+
+    Promise.all([
       api.get<FinancierDashboardData>(`/api/dashboard/financier/${companyId}`),
       api.get<Alert[]>(`/api/alerts/active/${companyId}`),
     ]).then(([dashRes, alertRes]) => {
-      if (dashRes.status === 'fulfilled') {
-        setDashboard(dashRes.value.data);
-      } else {
-        setError('Failed to load dashboard data.');
+      const alertData = Array.isArray(alertRes.data) ? alertRes.data : [];
+      setDashboard(dashRes.data);
+      setAlerts(alertData);
+      setLastUpdated(Date.now());
+
+      if (dashRes.data?.companyName) {
+        _financierCache[companyId] = { dashboard: dashRes.data, alerts: alertData };
+        useDashboardStore.getState().setFinancierData(dashRes.data);
+        console.log('Financier dashboard: cache saved for', companyId);
       }
-      
-      if (alertRes.status === 'fulfilled' && Array.isArray(alertRes.value.data)) {
-        setAlerts(alertRes.value.data);
-      }
+    }).catch(err => {
+      console.error('Financier dashboard fetch failed:', err);
+      setError('Failed to load dashboard data.');
     }).finally(() => setLoading(false));
+  }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleFundDeal = async (offerId: string) => {
+    try {
+      await api.post(`/api/financing/fund/${offerId}`);
+      const funded = dashboard?.activeOffers?.find(r => r.id === offerId);
+      if (funded) {
+        setFundedDeals(prev => [...prev, { ...funded, status: 'FUNDED' }]);
+        setDashboard(prev => prev ? {
+          ...prev,
+          activeOffers: prev.activeOffers.filter(r => r.id !== offerId),
+        } : prev);
+      }
+    } catch (err) {
+      console.error('Failed to fund deal:', err);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, [companyId]);
+
+  // Poll dashboard every 30s to catch new ACCEPTED offers from suppliers
+  useEffect(() => {
+    if (!companyId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.get(`/api/dashboard/financier/${companyId}`);
+        if (res.data) {
+          setDashboard(res.data);
+          useDashboardStore.getState().setFinancierData(res.data);
+        }
+      } catch (err) {
+        console.error('Financier poll failed:', err);
+      }
+    }, 30000);
+    return () => clearInterval(interval);
   }, [companyId]);
 
   const handleFund = async (offerId: string) => {
@@ -120,8 +192,6 @@ export default function FinancierDashboard() {
       console.error('Failed to fund request:', err);
     }
   };
-
-  const companyName = dashboard?.companyName ?? '...';
 
   if (error) {
     return (
@@ -144,11 +214,33 @@ export default function FinancierDashboard() {
               <h1 className="text-text font-sans font-semibold text-base">{companyName}</h1>
             )}
           </div>
-          <span className="text-muted font-mono text-xs">
-            {now.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
-            {' '}
-            {now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </span>
+          <div className="flex items-center gap-3">
+            {loading && cache.financierData && (
+              <span className="flex items-center gap-1.5 text-cyan font-mono text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
+                Syncing live data...
+              </span>
+            )}
+            {lastUpdated && (
+              <span className="text-muted font-mono text-xs">Updated {timeAgo(lastUpdated)}</span>
+            )}
+            <button
+              onClick={() => fetchData(true)}
+              disabled={loading}
+              title="Force refresh"
+              className="text-muted hover:text-cyan transition-colors disabled:opacity-40"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={loading ? 'animate-spin' : ''}>
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+            </button>
+            <span className="text-muted font-mono text-xs">
+              {now.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+              {' '}
+              {now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+          </div>
         </div>
 
         <div className="px-6 py-6 space-y-6">
@@ -157,9 +249,9 @@ export default function FinancierDashboard() {
               Array.from({ length: 3 }).map((_, i) => <Skeleton key={`metric-${i}`} className="h-24" />)
             ) : (
               <>
-                <MetricCard label="Total Deployed" value={formatINR(dashboard?.totalPortfolioValue)} valueClass="text-cyan glow-cyan" />
-                <MetricCard label="Active Deals" value={dashboard?.offersByType ? Object.values(dashboard.offersByType).reduce((a, b) => a + (Number(b) || 0), 0) : 0} />
-                <MetricCard label="AVG RISK SCORE" value={`${dashboard?.averageRiskScore?.toFixed(1) || 0}%`} valueClass="text-amber" />
+                <MetricCard label="Total Capital Deployed" value={formatINR(dashboard?.totalPortfolioValue)} valueClass="text-cyan glow-cyan" />
+                <MetricCard label="Deals Funded" value={dashboard?.offersByType ? Object.values(dashboard.offersByType).reduce((a, b) => a + (Number(b) || 0), 0) : 0} />
+                <MetricCard label="Avg Borrower Risk" value={`${dashboard?.averageRiskScore?.toFixed(1) || 0}%`} valueClass="text-amber" />
               </>
             )}
           </div>
@@ -167,11 +259,11 @@ export default function FinancierDashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
               
-              {/* Pending Requests */}
+              {/* Financing Requests */}
               <div className="bg-surface border border-border rounded p-5">
                 <div className="mb-5">
-                  <p className="text-cyan text-xs uppercase tracking-widest font-sans">FINANCING REQUESTS</p>
-                  <p className="text-muted text-xs font-sans mt-0.5">Suppliers seeking liquidity intervention</p>
+                  <p className="text-cyan text-xs uppercase tracking-widest font-sans">Deals Awaiting Your Funding</p>
+                  <p className="text-muted text-xs font-sans mt-0.5">Suppliers who have selected a financing option and need funding</p>
                 </div>
                 
                 {loading ? (
@@ -193,14 +285,16 @@ export default function FinancierDashboard() {
                           <th className="pb-3 font-medium px-2">Type</th>
                           <th className="pb-3 font-medium text-right px-2">Amount</th>
                           <th className="pb-3 font-medium text-right px-2">Status</th>
+                          <th className="pb-3 font-medium text-right px-2">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {dashboard.activeOffers.map((r, idx) => {
                           const reqId = r.id || (r as any).offerId || `req-${idx}`;
-                          const supplierName = r.supplierId && nodeMap[r.supplierId] 
-                            ? nodeMap[r.supplierId] 
-                            : (r.supplierId ? r.supplierId.slice(0, 8) + '...' : 'Unknown');
+                          // Prefer supplierName from response, fall back to nodeMap, then truncated UUID
+                          const supplierName = (r as any).supplierName
+                            || (r.supplierId && nodeMap[r.supplierId])
+                            || (r.supplierId ? `Supplier ${r.supplierId.slice(0, 8)}...` : 'Unknown');
                           return (
                             <tr key={reqId} className="hover:bg-cyan/5 transition-colors border-b border-border/30 last:border-0 group">
                               <td className="py-3 px-2 text-text text-sm font-medium font-sans">{supplierName}</td>
@@ -227,6 +321,16 @@ export default function FinancierDashboard() {
                                   </span>
                                 )}
                               </td>
+                              <td className="py-3 px-2 text-right">
+                                {r.status === 'ACCEPTED' && (
+                                  <button
+                                    onClick={() => handleFundDeal(r.id || (r as any).offerId)}
+                                    className="px-3 py-1.5 bg-cyan text-navy text-xs font-sans font-semibold rounded hover:bg-cyan/90 transition-all"
+                                  >
+                                    Fund Deal
+                                  </button>
+                                )}
+                              </td>
                             </tr>
                           );
                         })}
@@ -234,13 +338,30 @@ export default function FinancierDashboard() {
                     </table>
                   </div>
                 )}
+
+                {/* Funded deals section */}
+                {fundedDeals.length > 0 && (
+                  <div className="mt-6 pt-5 border-t border-border">
+                    <p className="text-success text-xs uppercase tracking-widest font-sans mb-3">Deals You've Funded</p>
+                    <div className="space-y-2">
+                      {fundedDeals.map((deal: any) => (
+                        <div key={deal.id} className="flex items-center justify-between p-3 bg-success/5 border border-success/20 rounded-lg">
+                          <span className="text-text font-sans font-medium text-sm">{(deal as any).supplierName || 'Supplier'}</span>
+                          <span className="text-muted text-xs font-mono">{deal.type?.replace(/_/g, ' ')}</span>
+                          <span className="text-text font-mono text-sm">{formatINR(deal.amount)}</span>
+                          <span className="text-success text-xs font-mono font-semibold">✅ FUNDED</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Coalition Analysis */}
+              {/* Multi-Financier Deal Analysis */}
               <div className="bg-surface border border-border rounded p-5">
                 <div className="mb-5">
-                  <p className="text-cyan text-xs uppercase tracking-widest font-sans">COALITION ANALYSIS — SHAPLEY VALUES</p>
-                  <p className="text-muted text-xs font-sans mt-0.5">Fair value allocation across financier network using cooperative game theory</p>
+                  <p className="text-cyan text-xs uppercase tracking-widest font-sans">Multi-Financier Deal Analysis</p>
+                  <p className="text-muted text-xs font-sans mt-0.5">How financing is split fairly when multiple financiers fund the same supplier</p>
                 </div>
                 
                 {loading ? (
@@ -250,12 +371,12 @@ export default function FinancierDashboard() {
                   </div>
                 ) : (
                   <p className="text-muted text-sm font-mono py-8 text-center bg-navy/50 rounded border border-border">
-                    No active coalition — insufficient network stress
+                    No active deals requiring multiple financiers yet
                   </p>
                 )}
                 
                 <p className="text-muted/60 text-[10px] font-sans mt-4 text-center">
-                  Shapley values represent each financier's marginal contribution to the rescue coalition
+                  When stress is high enough, this shows each financier's fair share of a joint rescue deal
                 </p>
               </div>
 

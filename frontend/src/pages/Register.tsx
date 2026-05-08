@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
@@ -72,6 +72,15 @@ export default function Register() {
   const [error,       setError]       = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
+  const [buyers,          setBuyers]          = useState<{ id: string; name: string }[]>([]);
+  const [selectedBuyerId, setSelectedBuyerId] = useState('');
+
+  useEffect(() => {
+    api.get<{ id: string; name: string }[]>('/api/companies/buyers')
+      .then(res => setBuyers(res.data))
+      .catch(err => console.error('Failed to fetch buyers:', err));
+  }, []);
+
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
     if (!companyName.trim()) errs.companyName = 'Company name is required';
@@ -81,6 +90,7 @@ export default function Register() {
     if (password !== confirmPass) errs.confirmPass = 'Passwords do not match';
     if (!gstNumber.trim())   errs.gstNumber = 'GST number is required';
     else if (!GST_REGEX.test(gstNumber.toUpperCase())) errs.gstNumber = 'Invalid GST format (e.g. 22AAAAA0000A1Z5)';
+    if (role === 'SUPPLIER' && !selectedBuyerId) errs.primaryBuyerId = 'Please select your primary buyer';
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -97,6 +107,7 @@ export default function Register() {
         password,
         gstNumber: gstNumber.toUpperCase().trim(),
         role,
+        ...(role === 'SUPPLIER' && selectedBuyerId && { primaryBuyerId: selectedBuyerId }),
       });
       login(data.token, data.role, data.companyId, data.companyName);
       navigate(ROLE_ROUTES[data.role] ?? '/login', { replace: true });
@@ -216,6 +227,28 @@ export default function Register() {
                   {ROLE_OPTIONS.find(o => o.value === role)?.desc}
                 </p>
               </div>
+
+              {/* Primary Buyer — only shown for SUPPLIER */}
+              {role === 'SUPPLIER' && (
+                <div>
+                  <label className="block text-muted text-xs font-sans uppercase tracking-widest mb-1.5">
+                    Primary Buyer <span className="text-danger">*</span>
+                  </label>
+                  <select
+                    value={selectedBuyerId}
+                    onChange={e => { setSelectedBuyerId(e.target.value); setFieldErrors(p => ({...p, primaryBuyerId: ''})); }}
+                    className="w-full bg-navy border border-border rounded px-3 py-2.5 font-sans text-sm text-text focus:outline-none focus:border-cyan transition-colors appearance-none"
+                    style={{ backgroundImage: 'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2394a3b8%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px' }}
+                  >
+                    <option value="">Select your primary buyer</option>
+                    {buyers.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                  {fe.primaryBuyerId && <p className="text-danger text-xs mt-1">{fe.primaryBuyerId}</p>}
+                  <p className="text-muted text-xs mt-1">The large company you primarily supply goods to</p>
+                </div>
+              )}
 
               {error && (
                 <div className="px-3 py-2.5 rounded border border-danger bg-danger/10 text-danger text-sm font-mono">

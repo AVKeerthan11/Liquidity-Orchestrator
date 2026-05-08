@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { invoiceApi } from '../services/api';
+import api from '../services/api';
 import Sidebar from '../components/layout/Sidebar';
 import { formatINR } from '../utils/formatCurrency';
 import { daysUntil } from '../utils/formatDate';
@@ -42,6 +43,15 @@ export default function InvoicesPage() {
   const [description, setDescription] = useState('');
   const [submitting,  setSubmitting]  = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
+  const [buyers,      setBuyers]      = useState<{ id: string; name: string }[]>([]);
+
+  // Fetch buyers when drawer opens
+  useEffect(() => {
+    if (!showDrawer) return;
+    api.get<{ id: string; name: string }[]>('/api/companies/buyers')
+      .then(res => setBuyers(res.data))
+      .catch(err => console.error('Failed to fetch buyers:', err));
+  }, [showDrawer]);
 
   useEffect(() => { fetchInvoices(); }, [companyId]);
 
@@ -78,13 +88,26 @@ export default function InvoicesPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!buyerId.trim() || !amount || !dueDate) {
-      setDrawerError('Buyer ID, amount, and due date are required');
+    if (!buyerId.trim()) {
+      setDrawerError('Please select a buyer');
+      return;
+    }
+    if (!amount || parseFloat(amount) <= 0) {
+      setDrawerError('Please enter a valid amount');
+      return;
+    }
+    if (!dueDate) {
+      setDrawerError('Please select a due date');
+      return;
+    }
+    if (new Date(dueDate) <= new Date()) {
+      setDrawerError('Due date must be in the future');
       return;
     }
     setSubmitting(true);
     setDrawerError(null);
     try {
+      // Step 1 — Create invoice
       await invoiceApi.create({
         supplierId: companyId,
         buyerId: buyerId.trim(),
@@ -92,14 +115,33 @@ export default function InvoicesPage() {
         dueDate,
         description: description.trim() || undefined,
       });
+
+      // Step 2 — Refresh invoice list
+      await fetchInvoices();
+
+      // Step 3 — Close drawer immediately
       setShowDrawer(false);
       setBuyerId(''); setAmount(''); setDueDate(''); setDescription('');
-      await fetchInvoices();
+      setSubmitting(false);
       showToast('Invoice created successfully');
+
+      // Step 4 — Fire risk recalculation in background, don't await
+      api.post('/api/risk/calculate/all').catch(console.error);
     } catch (err: any) {
       setDrawerError(err.response?.data?.message || 'Failed to create invoice');
-    } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleMarkPaid = async (invoiceId: string) => {
+    try {
+      await api.put(`/api/invoices/${invoiceId}/status`, { status: 'PAID' });
+      await fetchInvoices();
+      showToast('Invoice marked as paid');
+      // Background recalculation
+      api.post('/api/risk/calculate/all').catch(console.error);
+    } catch (err) {
+      console.error('Failed to mark invoice as paid:', err);
     }
   };
 
@@ -251,7 +293,9 @@ export default function InvoicesPage() {
                         <>
                           <tr key={inv.id}
                             className="border-b border-border/30 hover:bg-cyan/5 transition-colors">
-                            <td className="px-4 py-3 font-mono text-xs text-cyan">{inv.id.slice(0,8)}…</td>
+                            <td className="px-4 py-3 font-mono text-xs text-cyan">
+                              INV-{inv.id.slice(0, 8).toUpperCase()}
+                            </td>
                             <td className="px-4 py-3 text-sm text-text">{counterparty}</td>
                             <td className="px-4 py-3 font-mono text-sm text-text">{formatINR(inv.amount)}</td>
                             <td className="px-4 py-3 text-xs text-muted">{new Date(inv.createdAt).toLocaleDateString('en-IN')}</td>
@@ -265,20 +309,93 @@ export default function InvoicesPage() {
                               </span>
                             </td>
                             <td className="px-4 py-3">
-                              <button onClick={() => setExpandedId(isExpanded ? null : inv.id)}
-                                className="text-xs text-cyan hover:underline font-mono">
-                                {isExpanded ? 'Hide' : 'Details'}
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button onClick={() => setExpandedId(isExpanded ? null : inv.id)}
+                                  className="text-xs text-cyan hover:underline font-mono">
+                                  {isExpanded ? 'Hide' : 'Details'}
+                                </button>
+                                {role === 'BUYER' && (inv.status === 'PENDING' || inv.status === 'OVERDUE') && (
+                                  <button
+                                    onClick={() => handleMarkPaid(inv.id)}
+                                    className="px-2 py-0.5 bg-success/10 hover:bg-success/20 text-success border border-success/30 rounded text-xs font-mono transition-colors"
+                                  >
+                                    Mark Paid
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                           {isExpanded && (
                             <tr key={`${inv.id}-exp`} className="bg-navy/60 border-b border-border/30">
-                              <td colSpan={8} className="px-6 py-4">
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
-                                  <div><p className="text-muted mb-1">Supplier ID</p><p className="text-text">{inv.supplierId}</p></div>
-                                  <div><p className="text-muted mb-1">Buyer ID</p><p className="text-text">{inv.buyerId}</p></div>
-                                  <div><p className="text-muted mb-1">Full Amount</p><p className="text-cyan">{formatINR(inv.amount)}</p></div>
-                                  <div><p className="text-muted mb-1">Status</p><p className={STATUS_STYLE[inv.status]?.split(' ')[0]}>{inv.status}</p></div>
+                              <td colSpan={8} className="px-6 py-5">
+                                <div className="border border-border/60 rounded-lg bg-navy/40 p-5 space-y-4">
+
+                                  {/* Row 1 — Identity */}
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Invoice ID</p>
+                                      <p className="text-cyan break-all select-all">{inv.id}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Supplier</p>
+                                      <p className="text-text">{inv.supplierName || inv.supplierId}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Buyer</p>
+                                      <p className="text-text">{inv.buyerName || inv.buyerId}</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="border-t border-border/40" />
+
+                                  {/* Row 2 — Financials & Dates */}
+                                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs font-mono">
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Amount</p>
+                                      <p className="text-cyan font-semibold">{formatINR(inv.amount)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Issue Date</p>
+                                      <p className="text-text">{new Date(inv.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Due Date</p>
+                                      <p className="text-text">{new Date(inv.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">{days < 0 ? 'Days Overdue' : 'Days Left'}</p>
+                                      <p className={`font-semibold ${daysColor}`}>{Math.abs(days)}d</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted uppercase tracking-widest mb-1">Status</p>
+                                      <span className={`text-xs px-2 py-0.5 rounded border ${STATUS_STYLE[inv.status] || 'text-muted border-border'}`}>
+                                        {inv.status}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Row 3 — Payment info (PAID only) */}
+                                  {inv.status === 'PAID' && inv.payment && (
+                                    <>
+                                      <div className="border-t border-border/40" />
+                                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs font-mono">
+                                        <div>
+                                          <p className="text-muted uppercase tracking-widest mb-1">Amount Paid</p>
+                                          <p className="text-success font-semibold">{formatINR(inv.payment.amountPaid)}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-muted uppercase tracking-widest mb-1">Paid On</p>
+                                          <p className="text-text">{new Date(inv.payment.paidOn).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-muted uppercase tracking-widest mb-1">Payment Delay</p>
+                                          <p className={inv.payment.delayDays > 0 ? 'text-amber' : 'text-success'}>
+                                            {inv.payment.delayDays > 0 ? `${inv.payment.delayDays}d late` : 'On time'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -309,24 +426,47 @@ export default function InvoicesPage() {
             </div>
             <form onSubmit={handleCreate} className="space-y-5">
               <div>
-                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">Buyer ID</label>
-                <input value={buyerId} onChange={e => setBuyerId(e.target.value)} placeholder="UUID of buyer company"
-                  className="w-full bg-navy border border-border rounded px-3 py-2.5 font-mono text-sm text-text placeholder:text-muted focus:outline-none focus:border-cyan transition-colors"/>
+                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">
+                  Bill To (Buyer) <span className="text-danger">*</span>
+                </label>
+                <select
+                  value={buyerId}
+                  onChange={e => { setBuyerId(e.target.value); setDrawerError(null); }}
+                  className="w-full bg-navy border border-border rounded px-3 py-2.5 font-sans text-sm text-text focus:outline-none focus:border-cyan transition-colors appearance-none"
+                  style={{ backgroundImage: 'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2394a3b8%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px' }}
+                >
+                  <option value="">Select buyer...</option>
+                  {buyers.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">Invoice Amount (₹)</label>
-                <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="240000" min="1"
+                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">
+                  Invoice Amount (₹) <span className="text-danger">*</span>
+                </label>
+                <input type="number" value={amount} onChange={e => { setAmount(e.target.value); setDrawerError(null); }}
+                  placeholder="e.g. 2500000" min="1"
                   className="w-full bg-navy border border-border rounded px-3 py-2.5 font-mono text-sm text-text placeholder:text-muted focus:outline-none focus:border-cyan transition-colors"/>
+                {amount && parseFloat(amount) > 0 && (
+                  <p className="text-cyan text-xs mt-1 font-mono">
+                    = {formatINR(parseFloat(amount))}
+                  </p>
+                )}
               </div>
               <div>
-                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">Due Date</label>
-                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">
+                  Due Date <span className="text-danger">*</span>
+                </label>
+                <input type="date" value={dueDate}
+                  min={new Date().toISOString().split('T')[0]}
+                  onChange={e => { setDueDate(e.target.value); setDrawerError(null); }}
                   className="w-full bg-navy border border-border rounded px-3 py-2.5 font-mono text-sm text-text focus:outline-none focus:border-cyan transition-colors"/>
               </div>
               <div>
-                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">Description (optional)</label>
+                <label className="block text-muted text-xs uppercase tracking-widest mb-1.5">Description <span className="text-muted/50">(optional)</span></label>
                 <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
-                  placeholder="Invoice for goods delivered..."
+                  placeholder="e.g. Textile goods supply — March batch"
                   className="w-full bg-navy border border-border rounded px-3 py-2.5 font-mono text-sm text-text placeholder:text-muted focus:outline-none focus:border-cyan transition-colors resize-none"/>
               </div>
               {drawerError && (

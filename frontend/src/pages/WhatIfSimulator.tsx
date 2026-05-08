@@ -1,35 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../services/api';
 import Sidebar from '../components/layout/Sidebar';
 import { useAuthStore } from '../store/authStore';
 import type { SimulationResult, SimulationRequest } from '../types/api';
 
-// Hardcoded supplier list from requirements
-const SUPPLIERS = [
-  { id: 'bef4265a-3899-4fd2-a13a-cd96e328eb71', name: 'Patel Engineering Works' },
-  { id: '21ee68f8-a5af-448d-b055-1de885725a82', name: 'Reddy Construction Materials' },
-  { id: '9891ccf2-e015-4de5-9d9f-96fb0d90e62a', name: 'Agarwal Steel Fabricators' },
-  { id: '7d4aa259-29e9-4992-be40-20e4802c2bc4', name: 'Sharma Textiles Pvt Ltd' },
-  { id: '3a024242-e27d-45f8-83bf-5a55d35b7651', name: 'Gupta Auto Components' },
-  { id: 'ef0443a2-8caa-435d-b2b4-235ad8175a98', name: 'Singh Packaging Solutions' },
-  { id: 'e71aef68-9d27-4824-b571-9c18aacd9824', name: 'Kumar Electronics Mfg' },
-  { id: 'e213ed92-eec6-485e-af76-9c906018f157', name: 'Nair Rubber Industries' },
-  { id: '7c11be66-cf14-482b-8fbe-9862906e2345', name: 'Bose Electronics Components' },
-  { id: '0b81addb-ee91-4a7c-b3cc-47bb7cdccb40', name: 'Pillai Garments Exports' },
-  { id: '0c0ecb52-2235-4665-9ef1-89e3743f236e', name: 'Das Agro Products' },
-  { id: 'b2f1eaf6-6b81-4d0d-859b-1466f42f97e1', name: 'Mishra Furniture Works' },
-  { id: '57ae054e-fad3-42bc-9fd2-738d80573851', name: 'Joshi Food Processing' },
-  { id: '0f57cc11-0866-4db7-8f5e-85f62a76face', name: 'Chauhan Dairy Products' },
-  { id: 'fe247099-42eb-46cc-b6b6-bb339c7e4127', name: 'Pandey Logistics Services' },
-  { id: '7e2a9c89-73d0-4f0f-b8ed-4706b0a53230', name: 'Rao Precision Parts' },
-  { id: 'b3cfa7c9-e3e5-4a80-b1d0-ffba2b38fac7', name: 'Iyer Pharma Supplies' },
-  { id: 'a874a6a7-8c4b-4df8-b11f-69db17cec5b4', name: 'Mehta Chemical Industries' },
-];
+interface SupplierOption {
+  id: string;
+  name: string;
+}
 
 function formatINR(value: number | undefined | null): string {
   if (value === undefined || value === null || isNaN(value) || value === 0) return '₹0';
   if (value >= 1_00_00_000) return `₹${(value / 1_00_00_000).toFixed(3)} Cr`;
-  if (value >= 1_00_000)    return `₹${(value / 1_00_000).toFixed(2)} L`;
+  if (value >= 1_00_000) return `₹${(value / 1_00_000).toFixed(2)} L`;
   return `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }
 
@@ -37,12 +20,31 @@ export default function WhatIfSimulator() {
   const companyId = useAuthStore((s) => s.companyId);
 
   const [scenarioType, setScenarioType] = useState<'PAYMENT_DELAY' | 'SUPPLIER_FAILURE'>('PAYMENT_DELAY');
-  const [targetCompanyId, setTargetCompanyId] = useState(SUPPLIERS[0].id);
+  const [targetCompanyId, setTargetCompanyId] = useState('');
   const [delayDays, setDelayDays] = useState<number>(30);
+
+  const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+  const [suppliersLoading, setSuppliersLoading] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SimulationResult | null>(null);
+
+  useEffect(() => {
+    if (!companyId) return;
+    setSuppliersLoading(true);
+    api
+      .get<SupplierOption[]>(`/api/simulation/buyer/${companyId}/suppliers`)
+      .then((res) => {
+        setSuppliers(res.data);
+        if (res.data.length > 0) setTargetCompanyId(res.data[0].id);
+      })
+      .catch((err) => {
+        const status = err?.response?.status;
+        setError(status ? `Failed to load supplier list (HTTP ${status})` : 'Failed to load supplier list — check backend connection');
+      })
+      .finally(() => setSuppliersLoading(false));
+  }, [companyId]);
 
   const handleRunSimulation = async () => {
     setLoading(true);
@@ -52,23 +54,21 @@ export default function WhatIfSimulator() {
     const payload: SimulationRequest = {
       scenarioType,
       targetCompanyId,
-      buyerId: 'b885e67f-609e-44c2-b1e8-04744c5579a4',
+      buyerId: companyId!,
       ...(scenarioType === 'PAYMENT_DELAY' && { delayDays }),
-      ...(scenarioType === 'SUPPLIER_FAILURE' && { supplierId: targetCompanyId })
+      ...(scenarioType === 'SUPPLIER_FAILURE' && { supplierId: targetCompanyId }),
     };
 
     try {
       const res = await api.post<any>('/api/simulation/whatif', payload);
-      console.log('Simulation result:', res.data);
-      
-      const targetSupplier = SUPPLIERS.find(s => s.id === targetCompanyId);
-      
+      const targetSupplier = suppliers.find((s) => s.id === targetCompanyId);
+
       const mappedResult: SimulationResult = {
         scenarioType: payload.scenarioType,
-        targetCompany: targetSupplier ? targetSupplier.name : 'Unknown',
+        targetCompany: targetSupplier?.name ?? 'Unknown',
         totalFinancialExposure: res.data.totalFinancialImpact,
-        cascadeDepth: String(res.data.cascadeRisk ?? '0'),
-        networkResilienceScore: res.data.r0AfterScenario,
+        cascadeDepth: res.data.cascadeDepth ?? res.data.cascadeRisk ?? 0,
+        networkResilienceScore: res.data.networkResilienceScore ?? res.data.r0AfterScenario,
         recommendation: res.data.recommendation,
         impactedCompanies: (res.data.supplierDetails || []).map((s: any) => {
           const riskIncrease = (s.projectedScore || 0) - (s.currentScore || 0);
@@ -76,13 +76,12 @@ export default function WhatIfSimulator() {
           if (riskIncrease > 30) severity = 'CRITICAL';
           else if (riskIncrease > 20) severity = 'HIGH';
           else if (riskIncrease > 10) severity = 'MEDIUM';
-          
           return {
             companyId: s.supplierId || Math.random().toString(),
             companyName: s.supplierName,
             currentRiskScore: s.currentScore,
             projectedRiskScore: s.projectedScore,
-            riskIncrease: riskIncrease,
+            riskIncrease,
             impactSeverity: severity,
           };
         }),
@@ -97,6 +96,9 @@ export default function WhatIfSimulator() {
     }
   };
 
+  const chevronSvg =
+    'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2394a3b8%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E")';
+
   return (
     <div className="flex min-h-screen bg-navy text-text">
       <Sidebar companyName="What-If Simulator" />
@@ -105,7 +107,9 @@ export default function WhatIfSimulator() {
         {/* Top bar */}
         <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-border px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-cyan font-sans font-bold text-2xl tracking-wider uppercase">What-If Simulator</h1>
+            <h1 className="text-cyan font-sans font-bold text-2xl tracking-wider uppercase">
+              What-If Simulator
+            </h1>
             <p className="text-muted font-sans text-sm mt-1">
               Model supply chain stress scenarios before they happen
             </p>
@@ -116,67 +120,87 @@ export default function WhatIfSimulator() {
           {error && (
             <div className="bg-danger/10 border border-danger rounded p-4 text-danger text-sm font-mono flex items-center gap-2">
               <svg className="shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               {error}
             </div>
           )}
 
-          {/* Scenario Configuration Panel */}
+          {/* Scenario Configuration */}
           <div className="bg-surface border border-border rounded p-6 shadow-sm">
             <h2 className="text-cyan text-sm uppercase tracking-widest font-sans font-semibold mb-6">
               Scenario Configuration
             </h2>
 
             <div className="space-y-6">
-              {/* Scenario Type */}
+              {/* Scenario Type Buttons */}
               <div className="flex gap-4">
                 <button
-                  className={`flex-1 overflow-hidden relative p-4 text-center font-sans font-medium uppercase tracking-wide border rounded transition-all duration-200 ${
+                  className={`flex-1 p-4 rounded border transition-all duration-200 ${
                     scenarioType === 'PAYMENT_DELAY'
                       ? 'bg-cyan text-navy border-cyan shadow-[0_0_15px_rgba(0,212,255,0.3)]'
                       : 'bg-transparent text-cyan border-border hover:border-cyan/50 hover:bg-cyan/5'
                   }`}
-                  onClick={() => setScenarioType('PAYMENT_DELAY')}
+                  onClick={() => { setScenarioType('PAYMENT_DELAY'); setResult(null); }}
                 >
-                  Payment Delay
+                  <p className="font-sans font-medium uppercase tracking-wide text-center">Payment Delay</p>
+                  <p className={`text-xs mt-1 text-center font-sans font-normal normal-case tracking-normal ${scenarioType === 'PAYMENT_DELAY' ? 'text-navy/70' : 'text-muted'}`}>
+                    Simulate the impact of delaying payment to this supplier on your supply chain network
+                  </p>
                 </button>
+
                 <button
-                  className={`flex-1 overflow-hidden relative p-4 text-center font-sans font-medium uppercase tracking-wide border rounded transition-all duration-200 ${
+                  className={`flex-1 p-4 rounded border transition-all duration-200 ${
                     scenarioType === 'SUPPLIER_FAILURE'
                       ? 'bg-danger text-navy border-danger shadow-[0_0_15px_rgba(239,68,68,0.3)]'
                       : 'bg-transparent text-danger border-border hover:border-danger/50 hover:bg-danger/5'
                   }`}
-                  onClick={() => setScenarioType('SUPPLIER_FAILURE')}
+                  onClick={() => { setScenarioType('SUPPLIER_FAILURE'); setResult(null); }}
                 >
-                  Supplier Failure
+                  <p className="font-sans font-medium uppercase tracking-wide text-center">Supplier Failure</p>
+                  <p className={`text-xs mt-1 text-center font-sans font-normal normal-case tracking-normal ${scenarioType === 'SUPPLIER_FAILURE' ? 'text-navy/70' : 'text-muted'}`}>
+                    Simulate the impact if this supplier fails entirely on your supply chain network
+                  </p>
                 </button>
               </div>
 
-              {/* Target Company & Details */}
+              {/* Supplier Select + Delay Days */}
               <div className="grid grid-cols-2 gap-6">
                 <div className="flex flex-col gap-2">
                   <label className="text-muted text-xs uppercase tracking-widest font-sans font-medium">
-                    Target Company
+                    Select Supplier
                   </label>
-                  <select
-                    value={targetCompanyId}
-                    onChange={(e) => setTargetCompanyId(e.target.value)}
-                    className="bg-navy text-text border border-border focus:border-cyan outline-none rounded p-3 font-sans w-full cursor-pointer appearance-none"
-                    style={{ backgroundImage: 'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2394a3b8%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px' }}
-                  >
-                    {SUPPLIERS.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  {suppliersLoading ? (
+                    <div className="bg-navy border border-border rounded p-3 text-muted text-sm font-sans animate-pulse">
+                      Loading your suppliers...
+                    </div>
+                  ) : suppliers.length === 0 ? (
+                    <div className="bg-navy border border-border rounded p-3 text-muted text-sm font-sans">
+                      No suppliers found for your account
+                    </div>
+                  ) : (
+                    <select
+                      value={targetCompanyId}
+                      onChange={(e) => setTargetCompanyId(e.target.value)}
+                      className="bg-navy text-text border border-border focus:border-cyan outline-none rounded p-3 font-sans w-full cursor-pointer appearance-none"
+                      style={{
+                        backgroundImage: chevronSvg,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: 'right 12px center',
+                        backgroundSize: '16px',
+                      }}
+                    >
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 {scenarioType === 'PAYMENT_DELAY' ? (
-                  <div className="flex flex-col gap-2 fade-in">
+                  <div className="flex flex-col gap-2">
                     <label className="text-muted text-xs uppercase tracking-widest font-sans font-medium">
                       Delay Days
                     </label>
@@ -191,29 +215,28 @@ export default function WhatIfSimulator() {
                   </div>
                 ) : (
                   <div className="flex flex-col justify-end">
-                    <p className="text-muted text-sm font-sans mb-3 text-opacity-80">
-                      Simulates immediate bankruptcy or total operational failure of the supplier.
+                    <p className="text-muted text-sm font-sans mb-3">
+                      Simulates immediate bankruptcy or total operational failure of this supplier.
                     </p>
                   </div>
                 )}
               </div>
 
-              {/* Action Button */}
+              {/* Run Button */}
               <button
-                className={`mt-4 w-full py-4 rounded font-sans font-bold text-lg uppercase tracking-wider transition-all duration-300
-                  ${
-                    loading
-                      ? 'opacity-50 cursor-not-allowed bg-border text-muted border border-border'
-                      : scenarioType === 'PAYMENT_DELAY'
-                      ? 'bg-cyan text-navy hover:bg-[#33ddff] hover:shadow-[0_0_20px_rgba(0,212,255,0.4)]'
-                      : 'bg-danger text-navy hover:bg-[#f87171] hover:shadow-[0_0_20px_rgba(2ef,68,68,0.4)]'
-                  }`}
+                className={`mt-4 w-full py-4 rounded font-sans font-bold text-lg uppercase tracking-wider transition-all duration-300 ${
+                  loading || suppliersLoading || suppliers.length === 0
+                    ? 'opacity-50 cursor-not-allowed bg-border text-muted border border-border'
+                    : scenarioType === 'PAYMENT_DELAY'
+                    ? 'bg-cyan text-navy hover:bg-[#33ddff] hover:shadow-[0_0_20px_rgba(0,212,255,0.4)]'
+                    : 'bg-danger text-navy hover:bg-[#f87171] hover:shadow-[0_0_20px_rgba(239,68,68,0.4)]'
+                }`}
                 onClick={handleRunSimulation}
-                disabled={loading}
+                disabled={loading || suppliersLoading || suppliers.length === 0}
               >
                 {loading ? (
                   <div className="flex items-center justify-center gap-3">
-                    <svg className="animate-spin h-5 w-5 border-2 border-navy border-t-transparent rounded-full" viewBox="0 0 24 24"></svg>
+                    <svg className="animate-spin h-5 w-5 border-2 border-navy border-t-transparent rounded-full" viewBox="0 0 24 24" />
                     SIMULATING...
                   </div>
                 ) : (
@@ -223,7 +246,7 @@ export default function WhatIfSimulator() {
             </div>
           </div>
 
-          {/* Results Panel */}
+          {/* Results */}
           {result && (
             <div className="animate-fade-in space-y-8">
               <div className="border-b border-border pb-4 flex flex-col gap-1">
@@ -231,55 +254,69 @@ export default function WhatIfSimulator() {
                   SIMULATION RESULTS
                 </h2>
                 <p className="text-muted text-sm font-sans">
-                  Scenario: <span className="text-text font-medium">{result.scenarioType.replace('_', ' ')}</span> &mdash; Target: <span className="text-text font-medium">{result.targetCompany}</span>
+                  Scenario:{' '}
+                  <span className="text-text font-medium">{result.scenarioType.replace('_', ' ')}</span>
+                  {' '}&mdash;{' '}
+                  Supplier:{' '}
+                  <span className="text-text font-medium">{result.targetCompany}</span>
                 </p>
               </div>
 
               {/* Summary Cards */}
               <div className="grid grid-cols-3 gap-6">
-                <div className="bg-surface border border-border rounded p-6 shadow-sm border-t-4 border-t-danger relative overflow-hidden group hover:border-border transition-colors">
-                  <div className="absolute inset-0 bg-danger/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-                  <p className="text-muted text-xs uppercase tracking-widest font-sans mb-3 font-medium">
-                    Total Financial Exposure
-                  </p>
+                <div className="bg-surface border border-border border-t-4 border-t-danger rounded p-6 shadow-sm relative overflow-hidden group hover:border-border transition-colors">
+                  <div className="absolute inset-0 bg-danger/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                  <p className="text-muted text-xs uppercase tracking-widest font-sans mb-3 font-medium">Money at Risk</p>
                   <p className="font-mono text-3xl font-bold text-danger">
                     {formatINR(result.totalFinancialExposure ?? 0)}
                   </p>
                 </div>
 
-                <div className="bg-surface border border-border rounded p-6 shadow-sm border-t-4 border-t-amber relative overflow-hidden group hover:border-border transition-colors">
-                  <div className="absolute inset-0 bg-amber/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-                  <p className="text-muted text-xs uppercase tracking-widest font-sans mb-3 font-medium">
-                    Cascade Depth
-                  </p>
-                  <div className="flex items-baseline gap-2">
-                    <p className="font-mono text-3xl font-bold text-amber">
-                      {result.cascadeDepth ?? 0}
-                    </p>
-                    <p className="text-muted text-sm font-sans">tiers deep</p>
-                  </div>
+                <div className="bg-surface border border-border border-t-4 border-t-amber rounded p-6 shadow-sm relative overflow-hidden group hover:border-border transition-colors">
+                  <div className="absolute inset-0 bg-amber/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                  <p className="text-muted text-xs uppercase tracking-widest font-sans mb-3 font-medium">How Many Tiers Affected</p>
+                  {(() => {
+                    const depth = Number(result.cascadeDepth ?? 0);
+                    const color = depth < 3 ? 'text-success' : depth <= 7 ? 'text-amber' : 'text-danger';
+                    const badge = depth < 3 ? 'LOW' : depth <= 7 ? 'MEDIUM' : 'HIGH';
+                    const badgeClass =
+                      depth < 3
+                        ? 'text-success border-success bg-success/10'
+                        : depth <= 7
+                        ? 'text-amber border-amber bg-amber/10'
+                        : 'text-danger border-danger bg-danger/10';
+                    const subtext = depth < 3 ? 'Limited spread' : depth <= 7 ? 'Moderate spread' : 'Wide spread';
+                    return (
+                      <div className="flex flex-col gap-1.5">
+                        <p className={`font-mono text-3xl font-bold ${color}`}>
+                          {depth}{' '}
+                          <span className="text-base font-sans font-normal text-muted">suppliers affected</span>
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${badgeClass}`}>{badge}</span>
+                          <span className="text-muted text-xs font-sans">{subtext}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                <div className="bg-surface border border-border rounded p-6 shadow-sm border-t-4 border-t-cyan relative overflow-hidden group hover:border-border transition-colors">
-                  <div className="absolute inset-0 bg-cyan/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-                  <p className="text-muted text-xs uppercase tracking-widest font-sans mb-3 font-medium">
-                    Network Resilience Score
-                  </p>
-                  <p
-                    className={`font-mono text-3xl font-bold ${
-                      (result.networkResilienceScore ?? 0) > 70
-                        ? 'text-success'
-                        : (result.networkResilienceScore ?? 0) >= 40
-                        ? 'text-amber'
-                        : 'text-danger'
-                    }`}
-                  >
+                <div className="bg-surface border border-border border-t-4 border-t-cyan rounded p-6 shadow-sm relative overflow-hidden group hover:border-border transition-colors">
+                  <div className="absolute inset-0 bg-cyan/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                  <p className="text-muted text-xs uppercase tracking-widest font-sans mb-3 font-medium">Supply Chain Recovery Score</p>
+                  <p className={`font-mono text-3xl font-bold ${
+                    (result.networkResilienceScore ?? 0) > 70
+                      ? 'text-success'
+                      : (result.networkResilienceScore ?? 0) >= 40
+                      ? 'text-amber'
+                      : 'text-danger'
+                  }`}>
                     {(result.networkResilienceScore ?? 0).toFixed(1)}
                   </p>
                 </div>
               </div>
 
-              {/* Impact Analysis Table */}
+              {/* Impact Table */}
               <div className="bg-surface border border-border rounded shadow-sm overflow-hidden">
                 <div className="px-6 py-4 border-b border-border bg-[#0f1629]">
                   <h3 className="text-cyan text-sm uppercase tracking-widest font-sans font-semibold">
@@ -305,9 +342,7 @@ export default function WhatIfSimulator() {
                           return (
                             <tr
                               key={company.companyId}
-                              className={`transition-colors hover:bg-[#1a253c] ${
-                                isCritical ? 'bg-danger/5 hover:bg-danger/10' : ''
-                              }`}
+                              className={`transition-colors hover:bg-[#1a253c] ${isCritical ? 'bg-danger/5 hover:bg-danger/10' : ''}`}
                             >
                               <td className="px-6 py-4 text-text font-medium">{company.companyName}</td>
                               <td className="px-6 py-4 font-mono text-cyan">{(company.currentRiskScore ?? 0).toFixed(1)}</td>
@@ -316,22 +351,20 @@ export default function WhatIfSimulator() {
                                 <div className="flex items-center gap-1.5">
                                   +{(company.riskIncrease ?? 0).toFixed(1)}
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-danger">
-                                    <polyline points="18 15 12 9 6 15"></polyline>
+                                    <polyline points="18 15 12 9 6 15" />
                                   </svg>
                                 </div>
                               </td>
                               <td className="px-6 py-4">
-                                <span
-                                  className={`text-xs font-mono px-3 py-1 rounded border tracking-wider font-semibold ${
-                                    company.impactSeverity === 'LOW'
-                                      ? 'bg-cyan/10 text-cyan border-cyan/30'
-                                      : company.impactSeverity === 'MEDIUM'
-                                      ? 'bg-amber/10 text-amber border-amber/30'
-                                      : company.impactSeverity === 'HIGH'
-                                      ? 'bg-orange-400/10 text-orange-400 border-orange-400/30'
-                                      : 'bg-danger/10 text-danger border-danger/30'
-                                  }`}
-                                >
+                                <span className={`text-xs font-mono px-3 py-1 rounded border tracking-wider font-semibold ${
+                                  company.impactSeverity === 'LOW'
+                                    ? 'bg-cyan/10 text-cyan border-cyan/30'
+                                    : company.impactSeverity === 'MEDIUM'
+                                    ? 'bg-amber/10 text-amber border-amber/30'
+                                    : company.impactSeverity === 'HIGH'
+                                    ? 'bg-orange-400/10 text-orange-400 border-orange-400/30'
+                                    : 'bg-danger/10 text-danger border-danger/30'
+                                }`}>
                                   {company.impactSeverity}
                                 </span>
                               </td>
@@ -343,12 +376,10 @@ export default function WhatIfSimulator() {
                 </div>
               </div>
 
-              {/* Recommendation Panel */}
-              <div
-                className={`bg-surface border rounded p-6 shadow-sm border-l-4 ${
-                  scenarioType === 'SUPPLIER_FAILURE' ? 'border-l-danger' : 'border-l-amber'
-                }`}
-              >
+              {/* Recommendation */}
+              <div className={`bg-surface border rounded p-6 shadow-sm border-l-4 ${
+                scenarioType === 'SUPPLIER_FAILURE' ? 'border-l-danger' : 'border-l-amber'
+              }`}>
                 <div className="flex items-center gap-3 mb-4">
                   <div className={`p-2 rounded-full ${scenarioType === 'SUPPLIER_FAILURE' ? 'bg-danger/10 text-danger' : 'bg-amber/10 text-amber'}`}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -369,8 +400,7 @@ export default function WhatIfSimulator() {
           )}
         </div>
       </main>
-      
-      {/* Add a global style for the simple fade-in if not in tailwind config */}
+
       <style>{`
         .animate-fade-in {
           animation: fadeIn 0.4s ease-out forwards;

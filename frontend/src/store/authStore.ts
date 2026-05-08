@@ -23,8 +23,13 @@ export const useAuthStore = create<AuthState>()(
       login: (token, role, companyId, companyName) =>
         set({ token, role, companyId, companyName, isAuthenticated: true }),
 
-      logout: () =>
-        set({ token: null, role: null, companyId: null, companyName: null, isAuthenticated: false }),
+      logout: () => {
+        // Clear dashboard cache on logout so next session starts fresh
+        import('./dashboardStore').then(({ useDashboardStore }) => {
+          useDashboardStore.getState().clearCache();
+        });
+        set({ token: null, role: null, companyId: null, companyName: null, isAuthenticated: false });
+      },
     }),
     {
       name: 'auth-storage',

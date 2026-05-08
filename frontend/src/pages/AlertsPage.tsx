@@ -75,17 +75,20 @@ export default function AlertsPage() {
         </div>
 
         <div className="px-6 py-6 space-y-5">
-          {/* Summary cards */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Summary cards — aligned with actual severity levels */}
+          <div className="grid grid-cols-4 gap-4">
             {[
-              { label: 'Critical', count: counts.CRITICAL, color: 'text-danger' },
-              { label: 'Warnings', count: counts.HIGH + counts.MEDIUM, color: 'text-amber' },
-              { label: 'Info',     count: counts.LOW,      color: 'text-cyan'   },
+              { label: 'Critical', sev: 'CRITICAL', count: counts.CRITICAL, color: 'text-danger',       border: 'border-l-danger'       },
+              { label: 'High',     sev: 'HIGH',     count: counts.HIGH,     color: 'text-orange-400',   border: 'border-l-orange-400'   },
+              { label: 'Medium',   sev: 'MEDIUM',   count: counts.MEDIUM,   color: 'text-amber',        border: 'border-l-amber'        },
+              { label: 'Low',      sev: 'LOW',      count: counts.LOW,      color: 'text-cyan',         border: 'border-l-cyan'         },
             ].map(c => (
-              <div key={c.label} className="bg-surface border border-border rounded p-4">
+              <button key={c.label}
+                onClick={() => setFilter(c.sev as SeverityFilter)}
+                className={`bg-surface border border-border border-l-4 ${c.border} rounded p-4 text-left hover:border-opacity-80 transition-colors ${filter === c.sev ? 'ring-1 ring-cyan/30' : ''}`}>
                 <p className="text-muted text-xs uppercase tracking-widest font-sans mb-2">{c.label}</p>
                 <p className={`font-mono text-2xl font-medium ${c.color}`}>{loading ? '—' : c.count}</p>
-              </div>
+              </button>
             ))}
           </div>
 

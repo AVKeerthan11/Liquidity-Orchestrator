@@ -13,22 +13,22 @@ const TYPE_META: Record<string, { label: string; color: string; formula: string;
   EARLY_PAYMENT: {
     label: 'Early Payment',
     color: 'text-cyan border-cyan bg-cyan/10',
-    formula: 'P_now = P_invoice × (1 - (d × t) / 365)',
-    desc: 'Get paid early at a discount',
+    formula: 'You receive payment immediately at a small discount',
+    desc: 'Get paid immediately at a small discount fee',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   },
   INVOICE_DISCOUNTING: {
     label: 'Invoice Discounting',
     color: 'text-success border-success bg-success/10',
-    formula: 'P = P_invoice × (1 - (r × t) / 365)',
-    desc: 'Sell invoice to financier at discount',
+    formula: 'Sell your invoice to a financier at a discount rate',
+    desc: 'Sell your invoice to a financier at a discount',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
   },
   MICRO_CREDIT: {
     label: 'Micro Credit',
     color: 'text-amber border-amber bg-amber/10',
-    formula: 'Repayment = Principal × (1 + (r × t) / 365)',
-    desc: 'Short-term credit against invoice',
+    formula: 'Short-term loan repaid when your invoice is paid',
+    desc: 'Short-term loan repaid when invoice is settled',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
   },
 };
@@ -74,8 +74,8 @@ export default function FinancingPage() {
     try {
       await financingApi.accept(confirmOpt.id);
       setConfirmOpt(null);
-      await fetchOptions();
-      showToast('Financing offer accepted successfully');
+      await fetchOptions();  // reload so ACCEPTED + REJECTED statuses appear
+      showToast('Offer accepted! Awaiting financier funding.');
     } catch (err: any) {
       showToast(err.response?.data?.message || 'Failed to accept offer', 'error');
     } finally {
@@ -92,6 +92,34 @@ export default function FinancingPage() {
 
   // Group by type for summary cards
   const byType = (type: string) => options.filter(o => o.type === type);
+
+  // If supplier already accepted/funded an offer, disable the others
+  const hasActiveChoice = options.some(
+    o => o.status === 'ACCEPTED' || o.status === 'FUNDED'
+  );
+
+  // Financiers don't use supplier financing options
+  if (role === 'FINANCIER') {
+    return (
+      <div className="flex min-h-screen bg-navy">
+        <Sidebar companyName={companyName} />
+        <main className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center max-w-md">
+            <div className="w-14 h-14 rounded-full bg-cyan/10 border border-cyan/30 flex items-center justify-center mx-auto mb-5">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" strokeWidth="2">
+                <line x1="12" y1="1" x2="12" y2="23"/>
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+              </svg>
+            </div>
+            <h2 className="text-cyan font-sans font-semibold text-xl mb-3">Financing Deals You're Offering</h2>
+            <p className="text-muted font-sans text-sm leading-relaxed">
+              View and manage financing requests from your dashboard.
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-navy">
@@ -115,19 +143,24 @@ export default function FinancingPage() {
               const avgSpeed = typeOptions.length
                 ? typeOptions.reduce((s, o) => s + (o.speedDays || 0), 0) / typeOptions.length
                 : null;
+              // Unique financier names for this type
+              const financierNames = [...new Set(
+                typeOptions.map(o => o.financierName).filter(Boolean)
+              )] as string[];
               return (
-                <div key={key} className={`bg-surface border rounded p-5 border-l-4 ${meta.color.split(' ')[1]}`}
-                  style={{ borderColor: undefined }}>
+                <div key={key} className={`bg-surface border rounded p-5 border-l-4 ${meta.color.split(' ')[1]}`}>
                   <div className="flex items-start gap-3 mb-3">
                     <span className={meta.color.split(' ')[0]}>{meta.icon}</span>
                     <div>
                       <p className="text-text font-sans font-semibold text-sm">{meta.label}</p>
-                      <p className="text-muted text-xs mt-0.5">{meta.desc}</p>
+                      <p className="text-muted text-xs mt-0.5 whitespace-normal break-words">{meta.desc}</p>
+                      {financierNames.length > 0 && (
+                        <p className="text-muted text-xs mt-1 font-mono">
+                          by {financierNames.join(', ')}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <p className="font-mono text-xs text-muted/70 bg-navy/60 px-2 py-1.5 rounded mb-3 break-all">
-                    {meta.formula}
-                  </p>
                   <div className="flex gap-4 text-xs font-mono">
                     <div>
                       <p className="text-muted">Avg Cost</p>
@@ -162,10 +195,11 @@ export default function FinancingPage() {
                 <thead>
                   <tr className="border-b border-border text-muted text-xs uppercase tracking-wider">
                     <th className="px-4 py-3 font-medium">Type</th>
+                    <th className="px-4 py-3 font-medium">Financier</th>
                     <th className="px-4 py-3 font-medium">Offer Amount</th>
                     <th className="px-4 py-3 font-medium">Cost</th>
                     <th className="px-4 py-3 font-medium">Speed</th>
-                    <th className="px-4 py-3 font-medium">Routing Score</th>
+                    <th className="px-4 py-3 font-medium">Match Score</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     {role === 'SUPPLIER' && <th className="px-4 py-3 font-medium">Action</th>}
                   </tr>
@@ -174,14 +208,14 @@ export default function FinancingPage() {
                   {loading ? (
                     Array.from({ length: 3 }).map((_, i) => (
                       <tr key={i} className="border-b border-border/30">
-                        {Array.from({ length: 7 }).map((_, j) => (
+                        {Array.from({ length: 8 }).map((_, j) => (
                           <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full"/></td>
                         ))}
                       </tr>
                     ))
                   ) : options.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-16 text-center">
+                      <td colSpan={8} className="px-4 py-16 text-center">
                         <p className="text-muted font-mono text-sm">No financing options available right now</p>
                         <p className="text-muted text-xs mt-2">Options are generated based on your active invoices</p>
                       </td>
@@ -190,13 +224,18 @@ export default function FinancingPage() {
                     options.map(opt => {
                       const meta = TYPE_META[opt.type];
                       const score = opt.routingScore ?? 0;
-                      const isAccepted = opt.status === 'ACCEPTED';
                       return (
                         <tr key={opt.id} className="border-b border-border/30 hover:bg-cyan/5 transition-colors">
                           <td className="px-4 py-3">
                             <span className={`text-xs font-mono px-2 py-0.5 rounded border ${meta?.color || 'text-muted border-border'}`}>
                               {meta?.label || opt.type}
                             </span>
+                          </td>
+                          <td className="px-4 py-3 font-sans text-sm text-text">
+                            {opt.financierName
+                              ? <span className="text-cyan font-medium">{opt.financierName}</span>
+                              : <span className="text-muted text-xs">—</span>
+                            }
                           </td>
                           <td className="px-4 py-3 font-mono text-sm text-text">
                             {formatINR(opt.receivableAmount ?? opt.amount ?? 0)}
@@ -218,17 +257,35 @@ export default function FinancingPage() {
                           </td>
                           <td className="px-4 py-3">
                             <span className={`text-xs font-mono px-2 py-0.5 rounded border ${
-                              isAccepted ? 'text-success border-success bg-success/10' : 'text-muted border-border'
+                              opt.status === 'ACCEPTED' ? 'text-amber border-amber bg-amber/10' :
+                              opt.status === 'FUNDED'   ? 'text-success border-success bg-success/10' :
+                              opt.status === 'REJECTED' ? 'text-muted border-border' :
+                              'text-cyan border-cyan/30 bg-cyan/5'
                             }`}>
-                              {opt.status}
+                              {opt.status || 'PENDING'}
                             </span>
                           </td>
                           {role === 'SUPPLIER' && (
                             <td className="px-4 py-3">
-                              {!isAccepted && (
+                              {opt.status === 'ACCEPTED' && (
+                                <span className="text-xs font-mono text-amber">⏳ Awaiting funding</span>
+                              )}
+                              {opt.status === 'FUNDED' && (
+                                <span className="text-xs font-mono text-success">✅ Funded</span>
+                              )}
+                              {opt.status === 'REJECTED' && (
+                                <span className="text-xs font-mono text-muted opacity-50">Not selected</span>
+                              )}
+                              {(!opt.status || opt.status === 'PENDING') && hasActiveChoice && (
+                                <button disabled
+                                  className="text-xs font-sans px-3 py-1.5 rounded bg-border text-muted cursor-not-allowed opacity-40">
+                                  Accept Offer
+                                </button>
+                              )}
+                              {(!opt.status || opt.status === 'PENDING') && !hasActiveChoice && (
                                 <button onClick={() => setConfirmOpt(opt)}
-                                  className="text-xs bg-cyan/10 border border-cyan/30 text-cyan px-3 py-1 rounded hover:bg-cyan/20 transition-colors font-mono">
-                                  Accept
+                                  className="text-xs bg-cyan text-navy font-sans font-semibold px-3 py-1.5 rounded hover:bg-cyan/90 transition-all">
+                                  Accept Offer
                                 </button>
                               )}
                             </td>
@@ -246,21 +303,33 @@ export default function FinancingPage() {
           <div className="bg-surface border border-border rounded overflow-hidden">
             <button onClick={() => setShowFormula(v => !v)}
               className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-cyan/5 transition-colors">
-              <p className="text-text font-sans font-semibold text-sm">Routing Score Explained</p>
+              <p className="text-text font-sans font-semibold text-sm">How We Pick the Best Option</p>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                 className={`text-muted transition-transform ${showFormula ? 'rotate-180' : ''}`}>
                 <polyline points="6 9 12 15 18 9"/>
               </svg>
             </button>
             {showFormula && (
-              <div className="px-5 pb-5 border-t border-border">
-                <p className="font-mono text-sm text-cyan mt-4 mb-3">
-                  Score = (0.4 × (1/Cost)) + (0.3 × (1/Speed)) + (0.3 × Probability)
-                </p>
-                <div className="space-y-2 text-xs text-muted font-sans">
-                  <p><span className="text-text font-semibold">Cost (40%):</span> Lower financing cost = higher score. Minimizes what you pay.</p>
-                  <p><span className="text-text font-semibold">Speed (30%):</span> Faster disbursement = higher score. Prioritizes quick liquidity.</p>
-                  <p><span className="text-text font-semibold">Probability (30%):</span> Likelihood of approval based on your risk profile.</p>
+              <div className="border-t border-border">
+                <div className="p-4 space-y-3 text-sm text-muted">
+                  <p>Our routing algorithm scores each financing option across 3 factors:</p>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3">
+                      <span className="text-cyan font-medium min-w-[80px]">Cost (40%)</span>
+                      <span>Lower fees = higher score. We find you the cheapest option first.</span>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <span className="text-cyan font-medium min-w-[80px]">Speed (35%)</span>
+                      <span>Faster payment = higher score. Critical when you need cash urgently.</span>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <span className="text-cyan font-medium min-w-[80px]">Approval (25%)</span>
+                      <span>Higher chance of approval = higher score. Based on your risk profile.</span>
+                    </div>
+                  </div>
+                  <p className="text-muted/60 text-xs pt-2 border-t border-border">
+                    The option with the highest combined score is marked as RECOMMENDED.
+                  </p>
                 </div>
               </div>
             )}
@@ -279,6 +348,12 @@ export default function FinancingPage() {
                 <span className="text-muted">Type</span>
                 <span className="text-text">{TYPE_META[confirmOpt.type]?.label}</span>
               </div>
+              {confirmOpt.financierName && (
+                <div className="flex justify-between">
+                  <span className="text-muted">Financier</span>
+                  <span className="text-cyan">{confirmOpt.financierName}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted">You will receive</span>
                 <span className="text-cyan font-semibold">{formatINR(confirmOpt.receivableAmount ?? confirmOpt.amount ?? 0)}</span>
