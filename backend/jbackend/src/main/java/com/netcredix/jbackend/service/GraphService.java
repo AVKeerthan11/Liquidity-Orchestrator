@@ -226,6 +226,7 @@ public class GraphService {
                 }
             }
 
+<<<<<<< HEAD
             // Enrich supplier nodes with invoice stats scoped to this buyer
             UUID buyerUUID;
             try { buyerUUID = UUID.fromString(companyId); } catch (Exception e) { buyerUUID = null; }
@@ -252,6 +253,10 @@ public class GraphService {
                     log.warn("=== NEO4J: Could not enrich node {} - {}", node.getData().getId(), e.getMessage());
                 }
             }
+=======
+            // Enrich nodes with invoice data from PostgreSQL
+            enrichNodesWithInvoiceData(nodeMap, companyId);
+>>>>>>> 2046073 (devops)
 
             return CytoscapeResponse.builder()
                     .nodes(nodes)
@@ -263,6 +268,44 @@ public class GraphService {
                     .nodes(new java.util.ArrayList<>())
                     .edges(new java.util.ArrayList<>())
                     .build();
+        }
+    }
+
+    private void enrichNodesWithInvoiceData(java.util.Map<String, CytoscapeNode> nodeMap, String buyerIdStr) {
+        try {
+            UUID buyerId = UUID.fromString(buyerIdStr);
+            List<Invoice> buyerInvoices = invoiceRepository.findByBuyerId(buyerId);
+            
+            // Group invoices by supplier
+            Map<String, List<Invoice>> supplierInvoices = buyerInvoices.stream()
+                    .collect(Collectors.groupingBy(i -> i.getSupplier().getId().toString()));
+            
+            // Enrich each supplier node
+            for (Map.Entry<String, List<Invoice>> entry : supplierInvoices.entrySet()) {
+                String supplierId = entry.getKey();
+                List<Invoice> invoices = entry.getValue();
+                
+                CytoscapeNode node = nodeMap.get(supplierId);
+                if (node != null && node.getData() != null) {
+                    int invoiceCount = invoices.size();
+                    
+                    double pendingAmount = invoices.stream()
+                            .filter(i -> i.getStatus() == InvoiceStatus.PENDING)
+                            .map(i -> i.getAmount().doubleValue())
+                            .reduce(0.0, Double::sum);
+                    
+                    double overdueAmount = invoices.stream()
+                            .filter(i -> i.getStatus() == InvoiceStatus.OVERDUE)
+                            .map(i -> i.getAmount().doubleValue())
+                            .reduce(0.0, Double::sum);
+                    
+                    node.getData().setInvoiceCount(invoiceCount);
+                    node.getData().setPendingAmount(pendingAmount);
+                    node.getData().setOverdueAmount(overdueAmount);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("=== Failed to enrich nodes with invoice data: {}", e.getMessage());
         }
     }
 

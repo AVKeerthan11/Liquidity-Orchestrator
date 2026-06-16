@@ -68,7 +68,7 @@ const _financierCache: Record<string, {
 
 export default function FinancierDashboard() {
   const companyId = useAuthStore((s) => s.companyId) ?? '';
-  const companyName = useAuthStore((s) => s.companyName) ?? (_financierCache[companyId]?.dashboard?.companyName) ?? '...';
+  const companyName = useAuthStore((s) => s.companyName) ?? _financierCache[companyId]?.dashboard?.companyName ?? '...';
   const cache     = useDashboardStore();
   const [dashboard, setDashboard] = useState<FinancierDashboardData | null>(
     _financierCache[companyId]?.dashboard ?? cache.financierData
@@ -159,6 +159,23 @@ export default function FinancierDashboard() {
   };
 
   useEffect(() => { fetchData(); }, [companyId]);
+
+  // Poll dashboard every 30s to catch new ACCEPTED offers from suppliers
+  useEffect(() => {
+    if (!companyId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.get(`/api/dashboard/financier/${companyId}`);
+        if (res.data) {
+          setDashboard(res.data);
+          useDashboardStore.getState().setFinancierData(res.data);
+        }
+      } catch (err) {
+        console.error('Financier poll failed:', err);
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [companyId]);
 
   if (error) {
     return (

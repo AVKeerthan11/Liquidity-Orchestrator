@@ -107,6 +107,9 @@ export interface GraphNode {
     label: string;
     type: 'SUPPLIER' | 'BUYER' | 'FINANCIER';
     riskScore: number;
+    invoiceCount?: number;
+    pendingAmount?: number;
+    overdueAmount?: number;
   };
 }
 
@@ -171,11 +174,11 @@ export interface SimulationResult {
   targetCompany: string;
   impactedCompanies: ImpactedCompany[];
   totalFinancialExposure: number;
-  totalFinancialImpact: number;
-  riskScoreIncrease: number | null;
+  totalFinancialImpact?: number;
   cascadeDepth: string;
   networkResilienceScore: number;
   recommendation: string;
+  riskScoreIncrease?: number;
 }
 
 export interface SimulationRequest {

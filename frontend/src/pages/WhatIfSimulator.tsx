@@ -33,11 +33,22 @@ export default function WhatIfSimulator() {
   useEffect(() => {
     if (!companyId) return;
     setSuppliersLoading(true);
+    // Derive supplier list from invoices — no dedicated endpoint needed
     api
-      .get<SupplierOption[]>(`/api/simulation/buyer/${companyId}/suppliers`)
+      .get<any[]>(`/api/invoices/company/${companyId}`)
       .then((res) => {
-        setSuppliers(res.data);
-        if (res.data.length > 0) setTargetCompanyId(res.data[0].id);
+        const invoices: any[] = Array.isArray(res.data) ? res.data : [];
+        // Extract unique suppliers from invoices where current user is the buyer
+        const seen = new Set<string>();
+        const list: SupplierOption[] = [];
+        invoices.forEach(inv => {
+          if (inv.supplierId && !seen.has(inv.supplierId)) {
+            seen.add(inv.supplierId);
+            list.push({ id: inv.supplierId, name: inv.supplierName || inv.supplierId });
+          }
+        });
+        setSuppliers(list);
+        if (list.length > 0) setTargetCompanyId(list[0].id);
       })
       .catch((err) => {
         const status = err?.response?.status;
