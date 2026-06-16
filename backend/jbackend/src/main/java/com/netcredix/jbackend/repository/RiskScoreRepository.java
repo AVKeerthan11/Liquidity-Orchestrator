@@ -18,4 +18,9 @@ public interface RiskScoreRepository extends JpaRepository<RiskScore, UUID> {
 
     @Query("SELECT r FROM RiskScore r WHERE r.company.id = :companyId AND r.calculatedAt >= :since ORDER BY r.calculatedAt ASC")
     List<RiskScore> findHistoryByCompanyId(@Param("companyId") UUID companyId, @Param("since") LocalDateTime since);
+
+    @Query("SELECT COUNT(DISTINCT r.company.id) FROM RiskScore r " +
+           "WHERE r.calculatedAt = (SELECT MAX(r2.calculatedAt) FROM RiskScore r2 WHERE r2.company.id = r.company.id) " +
+           "AND r.score >= :threshold")
+    long countLatestScoresAboveThreshold(@Param("threshold") double threshold);
 }

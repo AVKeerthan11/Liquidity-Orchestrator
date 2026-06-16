@@ -14,6 +14,7 @@ import java.util.UUID;
 public class FinancingOfferResponse {
     private UUID id;
     private UUID supplierId;
+    private String supplierName;
     private FinancingType type;
     private BigDecimal amount;
     private BigDecimal cost;

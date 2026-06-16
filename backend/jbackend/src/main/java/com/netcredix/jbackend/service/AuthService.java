@@ -48,6 +48,14 @@ public class AuthService {
                 .build();
         company = companyRepository.save(company);
 
+        // Link supplier to their primary buyer if provided
+        if (request.getPrimaryBuyerId() != null && companyType == CompanyType.SUPPLIER) {
+            companyRepository.findById(request.getPrimaryBuyerId())
+                    .orElseThrow(() -> new RuntimeException("Buyer not found"));
+            company.setPrimaryBuyerId(request.getPrimaryBuyerId());
+            company = companyRepository.save(company);
+        }
+
         User user = User.builder()
                 .company(company)
                 .email(request.getEmail())

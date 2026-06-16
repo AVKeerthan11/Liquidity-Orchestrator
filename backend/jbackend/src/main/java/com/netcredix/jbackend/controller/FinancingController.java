@@ -30,4 +30,10 @@ public class FinancingController {
         com.netcredix.jbackend.dto.FinancingOfferResponse response = financingService.acceptOffer(offerId);
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/fund/{offerId}")
+    @PreAuthorize("hasRole('FINANCIER')")
+    public ResponseEntity<com.netcredix.jbackend.dto.FinancingOfferResponse> fundOffer(@PathVariable UUID offerId) {
+        return ResponseEntity.ok(financingService.fundOffer(offerId));
+    }
 }

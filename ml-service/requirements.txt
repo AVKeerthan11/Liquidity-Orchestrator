@@ -11,3 +11,9 @@ sqlalchemy
 python-dotenv
 requests
 bcrypt
+shap
+matplotlib
+seaborn
+jupyter
+notebook
+ipykernel

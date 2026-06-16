@@ -13,7 +13,9 @@ import java.util.Map;
 public class FinancierDashboardResponse {
     private long totalOpportunities;
     private List<FinancingOfferResponse> activeOffers;
+    private List<FinancingOfferResponse> fundedDeals;
     private BigDecimal totalPortfolioValue;
     private Double averageRiskScore;
     private Map<FinancingType, Long> offersByType;
+    private Long fundedDealsCount;
 }

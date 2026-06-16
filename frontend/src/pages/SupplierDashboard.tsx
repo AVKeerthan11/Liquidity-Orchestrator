@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart,
@@ -210,6 +210,13 @@ export default function SupplierDashboard() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  // Supplier What-If Simulator state
+  const [simBuyerId,   setSimBuyerId]   = useState('');
+  const [simDelayDays, setSimDelayDays] = useState(30);
+  const [simulating,   setSimulating]   = useState(false);
+  const [simResult,    setSimResult]    = useState<any>(null);
+  const [showScoringDetails, setShowScoringDetails] = useState(false);
+
   // Clock tick
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -314,6 +321,35 @@ export default function SupplierDashboard() {
     }, 30000);
     return () => clearInterval(interval);
   }, [companyId]);
+
+  // Unique buyers derived from the supplier's invoices (for simulator dropdown)
+  const uniqueBuyers = useMemo(() => {
+    const seen = new Set<string>();
+    return (dashboard?.recentInvoices ?? [])
+      .map(inv => ({ id: inv.buyerId, name: inv.buyerName }))
+      .filter(b => b.id && !seen.has(b.id) && seen.add(b.id));
+  }, [dashboard]);
+
+  const handleSupplierSimulation = async () => {
+    if (!simBuyerId) return;
+    setSimulating(true);
+    setSimResult(null);
+    try {
+      const response = await api.post('/api/simulation/whatif', {
+        scenario: 'PAYMENT_DELAY',
+        scenarioType: 'PAYMENT_DELAY',
+        buyerId: simBuyerId,
+        targetCompanyId: simBuyerId,
+        delayDays: simDelayDays,
+        requestingCompanyId: companyId,
+      });
+      setSimResult(response.data);
+    } catch (err) {
+      console.error('Simulation failed:', err);
+    } finally {
+      setSimulating(false);
+    }
+  };
 
   const handleAccept = async (offerId: string) => {
     // handled via confirmation dialog — this is kept for FinancingCard compat
@@ -666,10 +702,286 @@ export default function SupplierDashboard() {
                 <p className="text-muted/60 text-[10px] text-center font-sans tracking-wide">
                   {research.paperReference}
                 </p>
+
+                {/* Toggle */}
+                <button
+                  onClick={() => setShowScoringDetails(!showScoringDetails)}
+                  className="w-full mt-4 text-cyan text-sm flex items-center justify-center gap-2 hover:text-cyan/70 transition-colors font-sans"
+                >
+                  {showScoringDetails ? '▲ Hide details' : '▼ See how we calculate this'}
+                </button>
+
+                {/* Expandable scoring breakdown */}
+                {showScoringDetails && (
+                  <div className="mt-4 space-y-4 border-t border-border pt-4">
+
+                    {/* Traditional scoring */}
+                    <div className="bg-navy rounded-lg p-4 border border-border">
+                      <h4 className="text-text font-sans font-medium text-sm mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-muted inline-block" />
+                        Traditional Bank Scoring
+                      </h4>
+                      <div className="space-y-2 text-xs text-muted">
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 shrink-0">•</span>
+                          <span>Looks at your <span className="text-text">own payment history only</span> — how many invoices you paid on time</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 shrink-0">•</span>
+                          <span>Uses 4 basic features: overdue ratio, average delay days, pending ratio, payment frequency</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 shrink-0">•</span>
+                          <span>Treats every company in <span className="text-text">isolation</span> — ignores who your buyers and neighbors are</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 shrink-0">•</span>
+                          <span>Static snapshot — does not predict future stress, only reflects past behavior</span>
+                        </div>
+                        <div className="mt-2 p-2 bg-surface rounded font-mono text-xs text-muted">
+                          score = (overdue_ratio × 40) + (avg_delay × 30) + (pending_ratio × 20) + (frequency × 10)
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Our scoring */}
+                    <div className="bg-navy rounded-lg p-4 border border-cyan/30">
+                      <h4 className="text-cyan font-sans font-medium text-sm mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-cyan inline-block" />
+                        Our Smart Score (Network-Aware XGBoost)
+                      </h4>
+                      <div className="space-y-2 text-xs text-muted">
+                        <div className="flex items-start gap-2">
+                          <span className="text-cyan mt-0.5 shrink-0">•</span>
+                          <span>Uses <span className="text-cyan">8 features</span> including your buyer network health and supply chain position</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="text-cyan mt-0.5 shrink-0">•</span>
+                          <span><span className="text-cyan">Neighbor risk</span> — if your buyers are struggling, we detect that before it reaches you</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="text-cyan mt-0.5 shrink-0">•</span>
+                          <span><span className="text-cyan">Stress velocity</span> — detects if your situation is getting better or worse over time</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="text-cyan mt-0.5 shrink-0">•</span>
+                          <span><span className="text-cyan">Contagion score</span> — measures how exposed you are to network-wide financial stress spreading</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="text-cyan mt-0.5 shrink-0">•</span>
+                          <span>Trained on <span className="text-cyan">2000 companies</span> with time-lagged labels — predicts stress 30 days before it happens</span>
+                        </div>
+                        <div className="mt-2 p-2 bg-cyan/5 border border-cyan/20 rounded">
+                          <div className="text-cyan text-xs font-sans font-medium mb-2">8 Features Used:</div>
+                          <div className="grid grid-cols-2 gap-1 text-xs text-muted font-mono">
+                            <span>• Overdue ratio</span>
+                            <span>• Avg delay days</span>
+                            <span>• Pending ratio</span>
+                            <span>• Payment frequency</span>
+                            <span className="text-cyan">• Neighbor avg risk ✦</span>
+                            <span className="text-cyan">• Centrality score ✦</span>
+                            <span className="text-cyan">• Stress velocity ✦</span>
+                            <span className="text-cyan">• Contagion score ✦</span>
+                          </div>
+                          <div className="text-muted/60 text-xs font-sans mt-2">✦ = network-aware features not used by banks</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Your actual calculation breakdown */}
+                    <div className="bg-navy rounded-lg p-4 border border-purple-500/30">
+                      <h4 className="text-purple-400 font-sans font-medium text-sm mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-purple-400 inline-block" />
+                        Your Score Breakdown — How {research.companyName}'s Score Was Calculated
+                      </h4>
+
+                      {(() => {
+                        const rf = research.riskFactors ?? {};
+                        return (
+                          <>
+                            {/* Traditional score */}
+                            <div className="mb-3">
+                              <div className="text-muted text-xs mb-2 font-sans font-medium">
+                                Standard Credit Score = {research.traditionalScore.toFixed(1)}
+                              </div>
+                              <div className="space-y-1 text-xs font-mono">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Overdue ratio ({((rf.overdueRatio ?? 0) * 100).toFixed(1)}%) × 40</span>
+                                  <span className="text-text">+{((rf.overdueRatio ?? 0) * 40).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Avg delay ({(rf.avgDelayDays ?? 0).toFixed(1)} days) × 0.3</span>
+                                  <span className="text-text">+{((rf.avgDelayDays ?? 0) * 0.3).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Pending ratio ({((rf.pendingRatio ?? 0) * 100).toFixed(1)}%) × 20</span>
+                                  <span className="text-text">+{((rf.pendingRatio ?? 0) * 20).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Payment frequency ({(rf.paymentFrequency ?? 0).toFixed(1)}/mo) × 1</span>
+                                  <span className="text-text">+{((rf.paymentFrequency ?? 0) * 1).toFixed(1)}</span>
+                                </div>
+                                <div className="border-t border-border pt-1 flex justify-between font-medium">
+                                  <span className="text-muted font-sans">Traditional Total</span>
+                                  <span className="text-text">{research.traditionalScore.toFixed(1)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Network features */}
+                            <div className="border-t border-border pt-3">
+                              <div className="text-cyan text-xs mb-2 font-sans font-medium">
+                                Network Features Added by Our Model
+                              </div>
+                              <div className="space-y-1 text-xs font-mono">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Neighbor avg risk ({(rf.neighborAvgRisk ?? 0).toFixed(1)}/100)</span>
+                                  <span className={(rf.neighborAvgRisk ?? 0) > 50 ? 'text-danger' : 'text-success'}>
+                                    {(rf.neighborAvgRisk ?? 0) > 50 ? '⚠ high exposure' : '✓ low exposure'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Network centrality ({((rf.centralityScore ?? 0) * 100).toFixed(1)}%)</span>
+                                  <span className="text-cyan">
+                                    {(rf.centralityScore ?? 0) > 0.5 ? 'highly connected' : 'moderately connected'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">
+                                    Stress velocity ({(rf.stressVelocity ?? 0) >= 0 ? '+' : ''}{(rf.stressVelocity ?? 0).toFixed(3)})
+                                  </span>
+                                  <span className={(rf.stressVelocity ?? 0) > 0 ? 'text-danger' : 'text-success'}>
+                                    {(rf.stressVelocity ?? 0) > 0 ? '↑ worsening' : '↓ improving'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted">Contagion score ({(rf.contagionScore ?? 0).toFixed(2)})</span>
+                                  <span className={(rf.contagionScore ?? 0) > 5 ? 'text-danger' : 'text-cyan'}>
+                                    {(rf.contagionScore ?? 0) > 5 ? 'high spread risk' : 'contained'}
+                                  </span>
+                                </div>
+                                <div className="border-t border-border pt-1 flex justify-between font-medium">
+                                  <span className="text-muted font-sans">XGBoost Final Score</span>
+                                  <span className="text-cyan">{research.networkAwareScore.toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted font-sans">Additional risk detected</span>
+                                  <span className={research.underestimated ? 'text-danger font-medium' : 'text-success font-medium'}>
+                                    {research.underestimated ? '+' : '-'}{research.difference.toFixed(1)} pts
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Model metadata */}
+                            <div className="mt-3 pt-3 border-t border-border space-y-1 text-xs font-mono">
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted font-sans">Model ROC-AUC</span>
+                                <span className="text-purple-400">0.81 (validated)</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted font-sans">Research basis</span>
+                                <span className="text-purple-400">Tabachová et al. 2023</span>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <div className="bg-amber/5 border border-amber/20 rounded-lg p-3">
+                      <div className="text-amber text-xs font-sans font-medium mb-1">⚡ Why This Gap Matters</div>
+                      <p className="text-muted text-xs font-sans leading-relaxed">
+                        A bank using traditional scoring would have rated you at {research.traditionalScore.toFixed(1)} —
+                        potentially approving credit without seeing the full network risk.
+                        Our model captures {research.difference.toFixed(1)} additional
+                        risk points that traditional methods miss entirely.
+                        This gap is validated by Tabachová et al. 2023 research on supply chain network contagion.
+                      </p>
+                    </div>
+
+                  </div>
+                )}
               </div>
             )}
           </div>
           )}
+
+          {/* Supplier What-If Simulator */}
+          <div className="bg-[#0f1629] border border-[#1e3a5f] rounded-xl p-6">
+            <h3 className="text-cyan-400 font-medium text-sm uppercase tracking-wider mb-1">
+              Payment Delay Simulator
+            </h3>
+            <p className="text-gray-400 text-sm mb-4">
+              See how a buyer payment delay would impact your cash flow and risk score
+            </p>
+
+            {/* Buyer selector */}
+            <div className="mb-4">
+              <label className="text-gray-400 text-xs mb-1 block">Which buyer?</label>
+              <select
+                value={simBuyerId}
+                onChange={(e) => setSimBuyerId(e.target.value)}
+                className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg px-3 py-2 text-white text-sm"
+              >
+                <option value="">Select buyer...</option>
+                {uniqueBuyers.map(buyer => (
+                  <option key={buyer.id} value={buyer.id}>{buyer.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Delay days slider */}
+            <div className="mb-4">
+              <label className="text-gray-400 text-xs mb-2 block">
+                Delay duration: <span className="text-cyan-400 font-medium">{simDelayDays} days</span>
+              </label>
+              <input
+                type="range"
+                min="15"
+                max="90"
+                step="15"
+                value={simDelayDays}
+                onChange={(e) => setSimDelayDays(parseInt(e.target.value))}
+                className="w-full accent-cyan-400"
+              />
+              <div className="flex justify-between text-gray-500 text-xs mt-1">
+                <span>15</span><span>30</span><span>45</span><span>60</span><span>75</span><span>90</span>
+              </div>
+            </div>
+
+            {/* Run button */}
+            <button
+              onClick={handleSupplierSimulation}
+              disabled={!simBuyerId || simulating}
+              className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-gray-700 text-black font-medium py-2.5 rounded-lg text-sm transition-colors"
+            >
+              {simulating ? 'Simulating...' : 'Run Simulation'}
+            </button>
+
+            {/* Results */}
+            {simResult && (
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-[#0a0e1a] rounded-lg p-3 border border-red-500/20">
+                    <div className="text-gray-400 text-xs mb-1">Cash at Risk</div>
+                    <div className="text-red-400 font-medium">
+                      ₹{((simResult.totalFinancialExposure ?? simResult.totalFinancialImpact ?? 0) / 10_000_000).toFixed(2)} Cr
+                    </div>
+                  </div>
+                  <div className="bg-[#0a0e1a] rounded-lg p-3 border border-amber-500/20">
+                    <div className="text-gray-400 text-xs mb-1">Risk Score Impact</div>
+                    <div className="text-amber-400 font-medium">
+                      +{(simResult.riskScoreIncrease ?? 0).toFixed(1)} pts
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
+                  <div className="text-amber-400 text-xs font-medium mb-1">⚠ What This Means For You</div>
+                  <p className="text-gray-300 text-sm">{simResult.recommendation}</p>
+                </div>
+              </div>
+            )}
+          </div>
 
         </div>
       </main>

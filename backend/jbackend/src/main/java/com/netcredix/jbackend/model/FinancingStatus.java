@@ -1,5 +1,5 @@
 package com.netcredix.jbackend.model;
 
 public enum FinancingStatus {
-    PENDING, ACCEPTED, REJECTED
+    PENDING, ACCEPTED, REJECTED, FUNDED
 }

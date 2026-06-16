@@ -30,6 +30,9 @@ public class Company {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "primary_buyer_id")
+    private UUID primaryBuyerId;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

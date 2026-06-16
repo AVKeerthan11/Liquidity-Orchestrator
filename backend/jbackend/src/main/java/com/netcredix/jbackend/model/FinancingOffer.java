@@ -22,6 +22,10 @@ public class FinancingOffer {
     @JoinColumn(name = "supplier_id", nullable = false)
     private Company supplier;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "financier_id", nullable = true)
+    private Company financier;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private FinancingType type;

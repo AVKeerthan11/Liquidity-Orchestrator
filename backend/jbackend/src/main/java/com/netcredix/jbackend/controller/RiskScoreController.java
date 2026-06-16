@@ -49,7 +49,11 @@ public class RiskScoreController {
                     score.getCalculatedAt()
             );
             return ResponseEntity.ok(response);
-        }).orElseGet(() -> ResponseEntity.notFound().build());
+        }).orElseGet(() -> {
+            // New supplier with no score yet — return a safe zero default instead of 404
+            RiskScoreResponse empty = new RiskScoreResponse(companyId, 0.0, Severity.GREEN, null);
+            return ResponseEntity.ok(empty);
+        });
     }
 
     private Severity determineSeverity(Double score) {

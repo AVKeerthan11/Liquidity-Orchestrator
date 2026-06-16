@@ -53,6 +53,33 @@ public class DashboardService {
         List<FinancingOffer> offers = financingOfferRepository.findBySupplierId(companyId);
         List<FinancingOfferResponse> financingOffers = offers.stream().map(this::toFinancingOfferResponse).toList();
 
+        // ── Cash flow forecast via ML service ──────────────────────────────────
+        CashFlowForecastResponse cashFlowForecast = null;
+        try {
+            Map<String, Object> cf = mlService.callCashFlowForecast(companyId.toString());
+            if (cf != null) {
+                Double shortfallAmt = cf.get("shortfall_amount") instanceof Number n ? n.doubleValue() : null;
+                Double confidence   = cf.get("confidence")       instanceof Number n ? n.doubleValue() : null;
+                // shortfall_date present means a shortfall was detected; derive days from forecast
+                Object shortfallDate = cf.get("shortfall_date");
+                Integer daysUntil = null;
+                if (shortfallDate != null) {
+                    // predicted_inflows list — count entries until shortfall date
+                    Object inflows = cf.get("predicted_inflows");
+                    if (inflows instanceof List<?> list) {
+                        daysUntil = list.size(); // approximate: number of weekly periods until shortfall
+                    }
+                }
+                cashFlowForecast = CashFlowForecastResponse.builder()
+                        .predictedShortfall(shortfallAmt)
+                        .daysUntilShortfall(daysUntil)
+                        .confidence(confidence)
+                        .build();
+            }
+        } catch (Exception e) {
+            log.warn("ML cash flow forecast unavailable for {}: {}", companyId, e.getMessage());
+        }
+
         return SupplierDashboardResponse.builder()
                 .companyName(company.getName())
                 .riskScore(scoreValue)
@@ -64,6 +91,7 @@ public class DashboardService {
                 .activeAlerts(activeAlerts)
                 .financingOffers(financingOffers)
                 .recentInvoices(recentInvoices)
+                .cashFlowForecast(cashFlowForecast)
                 .build();
     }
 
@@ -176,7 +204,7 @@ public class DashboardService {
     }
 
     @Transactional
-    public FinancierDashboardResponse getFinancierDashboard() {
+    public FinancierDashboardResponse getFinancierDashboard(UUID financierId) {
         List<RiskScore> latestScores = riskScoreRepository.findAllLatestRiskScores();
         long totalOpportunities = 0;
         Double sumScore = 0.0;
@@ -188,24 +216,40 @@ public class DashboardService {
         }
         Double averageRiskScore = latestScores.isEmpty() ? 0.0 : sumScore / latestScores.size();
 
-        List<FinancingOffer> activeOfferModels = financingOfferRepository.findByStatus(FinancingStatus.PENDING);
-        List<FinancingOfferResponse> activeOffers = activeOfferModels.stream()
+        // ACCEPTED offers awaiting funding (all financiers can see these)
+        List<FinancingOffer> acceptedOfferModels = financingOfferRepository
+                .findByStatusAndTypeNot(FinancingStatus.ACCEPTED, FinancingType.EARLY_PAYMENT);
+        List<FinancingOfferResponse> activeOffers = acceptedOfferModels.stream()
                 .map(this::toFinancingOfferResponse)
                 .toList();
 
-        BigDecimal totalPortfolioValue = activeOfferModels.stream()
+        // FUNDED deals — only this financier's funded deals
+        List<FinancingOffer> fundedOfferModels = financierId != null
+                ? financingOfferRepository.findByFinancierIdAndStatus(financierId, FinancingStatus.FUNDED)
+                : financingOfferRepository.findByStatusAndTypeNot(FinancingStatus.FUNDED, FinancingType.EARLY_PAYMENT);
+        List<FinancingOfferResponse> fundedDeals = fundedOfferModels.stream()
+                .map(this::toFinancingOfferResponse)
+                .toList();
+
+        // Total capital deployed = sum of THIS financier's FUNDED deals only
+        BigDecimal totalPortfolioValue = fundedOfferModels.stream()
                 .map(FinancingOffer::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        Map<FinancingType, Long> offersByType = activeOfferModels.stream()
+        // Deals funded count = this financier's funded deals
+        long fundedDealsCount = fundedOfferModels.size();
+
+        Map<FinancingType, Long> offersByType = fundedOfferModels.stream()
                 .collect(Collectors.groupingBy(FinancingOffer::getType, Collectors.counting()));
 
         return FinancierDashboardResponse.builder()
                 .totalOpportunities(totalOpportunities)
                 .activeOffers(activeOffers)
+                .fundedDeals(fundedDeals)
                 .totalPortfolioValue(totalPortfolioValue)
                 .averageRiskScore(averageRiskScore)
                 .offersByType(offersByType)
+                .fundedDealsCount(fundedDealsCount)
                 .build();
     }
 
@@ -243,6 +287,7 @@ public class DashboardService {
         return FinancingOfferResponse.builder()
                 .id(offer.getId())
                 .supplierId(offer.getSupplier().getId())
+                .supplierName(offer.getSupplier().getName())
                 .type(offer.getType())
                 .amount(offer.getAmount())
                 .cost(offer.getCost())

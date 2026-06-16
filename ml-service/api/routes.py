@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from models.cash_flow_forecast import CashFlowForecaster
-from models.risk_scorer import RiskScorer
+from models.risk_scorer import RiskScorer, get_model_metrics
 from models.seir_model import SEIRModel
 from models.shapley_calculator import ShapleyCalculator
 
@@ -53,6 +53,15 @@ def predict_cashflow(request: CompanyRequest):
 def predict_risk(request: CompanyRequest):
     try:
         return RiskScorer().score(request.company_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/metrics")
+def model_metrics():
+    """Return XGBoost model test metrics and feature list."""
+    try:
+        return get_model_metrics()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

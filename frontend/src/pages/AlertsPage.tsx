@@ -149,6 +149,34 @@ export default function AlertsPage() {
                         <p className={`text-sm font-sans ${isRead ? 'text-muted' : 'text-text'}`}>
                           {alert.message}
                         </p>
+                        {/* Expandable detail for funded supplier alerts */}
+                        {alert.severity === 'CRITICAL' && alert.message.includes('risk score:') && (() => {
+                          const match = alert.message.match(/^(.+?)\s*\(funded via (.+?), risk score: ([\d.]+)\)/);
+                          if (!match) return null;
+                          const [, supplierName, fundingType, riskScore] = match;
+                          return (
+                            <div className="mt-3 p-3 bg-danger/5 border border-danger/20 rounded-lg">
+                              <div className="grid grid-cols-3 gap-3 text-xs">
+                                <div>
+                                  <p className="text-muted font-sans mb-1">Supplier</p>
+                                  <p className="text-text font-mono font-medium">{supplierName}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted font-sans mb-1">Funding Type</p>
+                                  <p className="text-amber font-mono">{fundingType}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted font-sans mb-1">Current Risk Score</p>
+                                  <p className="text-danger font-mono font-bold">{riskScore} / 100</p>
+                                </div>
+                              </div>
+                              <p className="text-muted/70 text-xs font-sans mt-2">
+                                This supplier's risk has exceeded the critical threshold (60).
+                                Your funded capital may be at risk — consider follow-up action.
+                              </p>
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="flex flex-col items-end gap-2 flex-shrink-0">
                         <span className="text-xs text-muted font-mono">{timeAgo(alert.createdAt)}</span>

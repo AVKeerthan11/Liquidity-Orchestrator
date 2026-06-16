@@ -6,6 +6,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
+import java.util.UUID;
+
 @Data
 public class RegisterRequest {
 
@@ -24,4 +26,6 @@ public class RegisterRequest {
 
     @NotBlank
     private String password;
+
+    private UUID primaryBuyerId; // optional — only used when role is SUPPLIER
 }

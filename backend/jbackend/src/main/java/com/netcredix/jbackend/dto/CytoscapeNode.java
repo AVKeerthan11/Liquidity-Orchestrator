@@ -21,5 +21,8 @@ public class CytoscapeNode {
         private String label;
         private String type;
         private Double riskScore;
+        private Double pendingAmount;
+        private Double overdueAmount;
+        private Integer invoiceCount;
     }
 }

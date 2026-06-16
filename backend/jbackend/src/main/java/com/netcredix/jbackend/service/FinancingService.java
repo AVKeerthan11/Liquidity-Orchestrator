@@ -6,6 +6,7 @@ import com.netcredix.jbackend.repository.CompanyRepository;
 import com.netcredix.jbackend.repository.FinancingOfferRepository;
 import com.netcredix.jbackend.repository.InvoiceRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,59 +23,74 @@ public class FinancingService {
     private final InvoiceRepository invoiceRepository;
     private final FinancingOfferRepository financingOfferRepository;
     private final CompanyRepository companyRepository;
+    @Lazy private final AlertService alertService;
 
     @Transactional
     public List<FinancingOptionResponse> generateFinancingOptions(UUID supplierId) {
         Company supplier = companyRepository.findById(supplierId)
                 .orElseThrow(() -> new RuntimeException("Supplier not found"));
 
-        List<FinancingOffer> existingOffers = new ArrayList<>();
-        for (FinancingOffer o : financingOfferRepository.findBySupplierId(supplierId)) {
-            if (o.getStatus() == FinancingStatus.PENDING) {
-                existingOffers.add(o);
-            }
+        // If supplier has no active invoices, financing is not needed — return empty
+        long activeInvoices = invoiceRepository.countBySupplierIdAndStatusIn(
+                supplierId, List.of(InvoiceStatus.PENDING, InvoiceStatus.OVERDUE));
+        if (activeInvoices == 0) {
+            return Collections.emptyList();
         }
+
+        // Return existing offers (PENDING, ACCEPTED, FUNDED, REJECTED) — preserves status across calls
+        List<FinancingOffer> existingOffers = financingOfferRepository
+                .findBySupplierIdAndStatusInWithFinancier(supplierId,
+                        List.of(FinancingStatus.PENDING, FinancingStatus.ACCEPTED,
+                                FinancingStatus.FUNDED, FinancingStatus.REJECTED));
 
         if (!existingOffers.isEmpty()) {
-            Map<FinancingType, FinancingOptionResponse> uniqueOptions = new EnumMap<>(FinancingType.class);
-            for (FinancingOffer offer : existingOffers) {
-                if (uniqueOptions.containsKey(offer.getType())) continue;
-
-                FinancingType type = offer.getType();
-                BigDecimal recAmt = offer.getAmount();
-                BigDecimal cost = offer.getCost();
-                BigDecimal origAmt;
-                int speed;
-                BigDecimal prob;
-
-                if (type == FinancingType.EARLY_PAYMENT) {
-                    origAmt = recAmt.add(cost);
-                    speed = 1;
-                    prob = new BigDecimal("0.95");
-                } else if (type == FinancingType.INVOICE_DISCOUNTING) {
-                    origAmt = recAmt.add(cost);
-                    speed = 3;
-                    prob = new BigDecimal("0.85");
-                } else {
-                    origAmt = recAmt;
-                    speed = 5;
-                    prob = new BigDecimal("0.70");
+            // Backfill financier_id for legacy rows created before the column existed
+            List<Company> financiers = companyRepository.findByType(CompanyType.FINANCIER);
+            boolean anyBackfilled = false;
+            for (int i = 0; i < existingOffers.size(); i++) {
+                FinancingOffer offer = existingOffers.get(i);
+                if (offer.getFinancier() == null && !financiers.isEmpty()) {
+                    offer.setFinancier(financiers.get(i % financiers.size()));
+                    financingOfferRepository.save(offer);
+                    anyBackfilled = true;
                 }
-
-                BigDecimal score = calculateScore(cost, speed, prob);
-                uniqueOptions.put(type, createOption(type, origAmt, recAmt, cost, speed, prob, score));
+            }
+            if (anyBackfilled) {
+                existingOffers = financingOfferRepository
+                        .findBySupplierIdAndStatusInWithFinancier(supplierId,
+                                List.of(FinancingStatus.PENDING, FinancingStatus.ACCEPTED,
+                                        FinancingStatus.FUNDED, FinancingStatus.REJECTED));
             }
 
-            List<FinancingOptionResponse> mappedOptions = new ArrayList<>(uniqueOptions.values());
-            if (!mappedOptions.isEmpty()) {
-                FinancingOptionResponse recommended = mappedOptions.stream()
-                        .max(Comparator.comparing(FinancingOptionResponse::getRoutingScore))
-                        .orElse(mappedOptions.get(0));
-                recommended.setRecommended(true);
-            }
-            return mappedOptions;
+            return existingOffers.stream()
+                    .map(offer -> {
+                        FinancingType type = offer.getType();
+                        BigDecimal recAmt = offer.getAmount();
+                        BigDecimal cost   = offer.getCost();
+                        BigDecimal origAmt;
+                        int speed;
+                        BigDecimal prob;
+
+                        if (type == FinancingType.EARLY_PAYMENT) {
+                            origAmt = recAmt.add(cost); speed = 1; prob = new BigDecimal("0.95");
+                        } else if (type == FinancingType.INVOICE_DISCOUNTING) {
+                            origAmt = recAmt.add(cost); speed = 3; prob = new BigDecimal("0.85");
+                        } else {
+                            origAmt = recAmt; speed = 5; prob = new BigDecimal("0.70");
+                        }
+
+                        BigDecimal score = calculateScore(cost, speed, prob);
+                        FinancingOptionResponse opt = createOption(
+                                offer.getId(), type, origAmt, recAmt, cost, speed, prob, score);
+                        opt.setStatus(offer.getStatus());
+                        if (offer.getFinancier() != null) {
+                            opt.setFinancierId(offer.getFinancier().getId());
+                            opt.setFinancierName(offer.getFinancier().getName());
+                        }
+                        return opt;
+                    })
+                    .collect(java.util.stream.Collectors.toList());
         }
-
         List<Invoice> invoices = invoiceRepository.findBySupplierIdAndStatusIn(
                 supplierId, List.of(InvoiceStatus.PENDING, InvoiceStatus.OVERDUE));
 
@@ -124,24 +140,42 @@ public class FinancingService {
         BigDecimal scoreC = calculateScore(costC, speedC, probC);
 
         List<FinancingOptionResponse> options = new ArrayList<>();
-        options.add(createOption(FinancingType.EARLY_PAYMENT, originalAmount, optionA_Pnow, costA, speedA, probA, scoreA));
-        options.add(createOption(FinancingType.INVOICE_DISCOUNTING, originalAmount, optionB_Pnow, costB, speedB, probB, scoreB));
-        options.add(createOption(FinancingType.MICRO_CREDIT, originalAmount, originalAmount, costC, speedC, probC, scoreC));
+        options.add(createOption(null, FinancingType.EARLY_PAYMENT, originalAmount, optionA_Pnow, costA, speedA, probA, scoreA));
+        options.add(createOption(null, FinancingType.INVOICE_DISCOUNTING, originalAmount, optionB_Pnow, costB, speedB, probB, scoreB));
+        options.add(createOption(null, FinancingType.MICRO_CREDIT, originalAmount, originalAmount, costC, speedC, probC, scoreC));
 
         FinancingOptionResponse recommended = options.stream()
                 .max(Comparator.comparing(FinancingOptionResponse::getRoutingScore))
                 .orElse(options.get(0));
         recommended.setRecommended(true);
 
-        for (FinancingOptionResponse opt : options) {
+        // Fetch all financier companies to assign one per offer type (round-robin)
+        List<Company> financiers = companyRepository.findByType(CompanyType.FINANCIER);
+
+        for (int i = 0; i < options.size(); i++) {
+            FinancingOptionResponse opt = options.get(i);
+            // Skip if an offer of this type already exists for this supplier (any status)
+            if (financingOfferRepository.existsBySupplierIdAndType(supplierId, opt.getType())) {
+                continue;
+            }
+            // Assign a financier round-robin if any exist
+            Company assignedFinancier = financiers.isEmpty() ? null : financiers.get(i % financiers.size());
+
             FinancingOffer offer = FinancingOffer.builder()
                     .supplier(supplier)
+                    .financier(assignedFinancier)
                     .type(opt.getType())
                     .amount(opt.getReceivableAmount())
                     .cost(opt.getCost())
                     .status(FinancingStatus.PENDING)
                     .build();
-            financingOfferRepository.save(offer);
+            FinancingOffer saved = financingOfferRepository.save(offer);
+            opt.setId(saved.getId());
+            opt.setStatus(FinancingStatus.PENDING);
+            if (assignedFinancier != null) {
+                opt.setFinancierId(assignedFinancier.getId());
+                opt.setFinancierName(assignedFinancier.getName());
+            }
         }
 
         return options;
@@ -151,12 +185,62 @@ public class FinancingService {
     public com.netcredix.jbackend.dto.FinancingOfferResponse acceptOffer(UUID offerId) {
         FinancingOffer offer = financingOfferRepository.findById(offerId)
                 .orElseThrow(() -> new RuntimeException("Offer not found"));
+
+        // 1. Accept this offer
         offer.setStatus(FinancingStatus.ACCEPTED);
         offer = financingOfferRepository.save(offer);
-        
+
+        // 2. Fire an immediate alert to the specific financier assigned to this offer
+        if (offer.getFinancier() != null) {
+            String supplierName = offer.getSupplier().getName();
+            String typeName = offer.getType().name().replace('_', ' ');
+            alertService.createTargetedAlert(
+                offer.getFinancier(),
+                supplierName + " has accepted your " + typeName + " offer — fund it now to complete the deal",
+                AlertSeverity.HIGH
+            );
+        }
+
+        // 3. Reject all other PENDING offers for the same supplier
+        UUID supplierId = offer.getSupplier().getId();
+        final UUID acceptedId = offer.getId();
+        financingOfferRepository
+                .findBySupplierIdAndStatus(supplierId, FinancingStatus.PENDING)
+                .stream()
+                .filter(o -> !o.getId().equals(acceptedId))
+                .forEach(o -> {
+                    o.setStatus(FinancingStatus.REJECTED);
+                    financingOfferRepository.save(o);
+                });
+
         return com.netcredix.jbackend.dto.FinancingOfferResponse.builder()
                 .id(offer.getId())
                 .supplierId(offer.getSupplier().getId())
+                .type(offer.getType())
+                .amount(offer.getAmount())
+                .cost(offer.getCost())
+                .status(offer.getStatus())
+                .createdAt(offer.getCreatedAt())
+                .build();
+    }
+
+    @Transactional
+    public com.netcredix.jbackend.dto.FinancingOfferResponse fundOffer(UUID offerId) {
+        FinancingOffer offer = financingOfferRepository.findById(offerId)
+                .orElseThrow(() -> new RuntimeException("Offer not found"));
+
+        if (offer.getStatus() != FinancingStatus.ACCEPTED) {
+            throw new RuntimeException(
+                "Only ACCEPTED offers can be funded. Current status: " + offer.getStatus());
+        }
+
+        offer.setStatus(FinancingStatus.FUNDED);
+        offer = financingOfferRepository.save(offer);
+
+        return com.netcredix.jbackend.dto.FinancingOfferResponse.builder()
+                .id(offer.getId())
+                .supplierId(offer.getSupplier().getId())
+                .supplierName(offer.getSupplier().getName())
                 .type(offer.getType())
                 .amount(offer.getAmount())
                 .cost(offer.getCost())
@@ -180,8 +264,9 @@ public class FinancingService {
         return term1.add(term2).add(term3);
     }
 
-    private FinancingOptionResponse createOption(FinancingType type, BigDecimal orig, BigDecimal rec, BigDecimal cost, int speed, BigDecimal prob, BigDecimal score) {
+    private FinancingOptionResponse createOption(UUID id, FinancingType type, BigDecimal orig, BigDecimal rec, BigDecimal cost, int speed, BigDecimal prob, BigDecimal score) {
         return FinancingOptionResponse.builder()
+                .id(id)
                 .type(type)
                 .originalAmount(orig.setScale(2, RoundingMode.HALF_UP))
                 .receivableAmount(rec.setScale(2, RoundingMode.HALF_UP))

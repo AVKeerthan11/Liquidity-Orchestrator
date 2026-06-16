@@ -24,6 +24,11 @@ public class ResearchComparisonResponse {
     public static class RiskFactors {
         private Double overdueRatio;
         private Double avgDelayDays;
-        private Double neighborStress;
+        private Double pendingRatio;
+        private Double paymentFrequency;
+        private Double neighborAvgRisk;
+        private Double centralityScore;
+        private Double stressVelocity;
+        private Double contagionScore;
     }
 }

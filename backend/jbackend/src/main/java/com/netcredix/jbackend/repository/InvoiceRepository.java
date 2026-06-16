@@ -19,13 +19,27 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
 
     List<Invoice> findByBuyerId(UUID buyerId);
 
+    @Query("SELECT i FROM Invoice i JOIN FETCH i.supplier WHERE i.buyer.id = :buyerId")
+    List<Invoice> findByBuyerIdWithSupplier(@Param("buyerId") UUID buyerId);
+
     List<Invoice> findBySupplierId(UUID supplierId);
 
     List<Invoice> findBySupplierIdAndStatusIn(UUID supplierId, List<InvoiceStatus> statuses);
 
+    long countBySupplierIdAndBuyerId(UUID supplierId, UUID buyerId);
+
+    List<Invoice> findBySupplierIdAndBuyerId(UUID supplierId, UUID buyerId);
+
+    List<Invoice> findByBuyerIdIn(List<UUID> buyerIds);
+
+    @Query("SELECT i FROM Invoice i JOIN FETCH i.supplier JOIN FETCH i.buyer WHERE i.buyer.id IN :buyerIds")
+    List<Invoice> findByBuyerIdInWithCompanies(@Param("buyerIds") List<UUID> buyerIds);
+
     long countBySupplierId(UUID supplierId);
 
     long countBySupplierIdAndStatus(UUID supplierId, InvoiceStatus status);
+
+    long countBySupplierIdAndStatusIn(UUID supplierId, List<InvoiceStatus> statuses);
 
     List<Invoice> findTop5BySupplierIdOrderByCreatedAtDesc(UUID supplierId);
 }

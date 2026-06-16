@@ -19,4 +19,5 @@ public class SupplierDashboardResponse {
     private List<AlertResponse> activeAlerts;
     private List<FinancingOfferResponse> financingOffers;
     private List<InvoiceResponse> recentInvoices;
+    private CashFlowForecastResponse cashFlowForecast;
 }

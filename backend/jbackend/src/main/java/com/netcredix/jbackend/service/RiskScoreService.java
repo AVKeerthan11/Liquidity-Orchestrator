@@ -134,62 +134,143 @@ public class RiskScoreService {
     public com.netcredix.jbackend.dto.ResearchComparisonResponse getResearchComparison(UUID companyId) {
         Company company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException("Company not found"));
-        
-        List<Invoice> invoices = invoiceRepository.findByCompanyId(companyId);
+
+        // All invoices where this company is the supplier
+        List<Invoice> supplierInvoices = invoiceRepository.findBySupplierId(companyId);
         List<Payment> payments = paymentRepository.findByInvoiceSupplierId(companyId);
 
-        double overdueRatio = calculateOverdueRatio(invoices);
-        double avgDelayDays = calculateAvgDelayDays(payments);
+        long totalInvoices = supplierInvoices.size();
+        long overdueCount  = supplierInvoices.stream().filter(i -> i.getStatus() == InvoiceStatus.OVERDUE).count();
+        long pendingCount  = supplierInvoices.stream().filter(i -> i.getStatus() == InvoiceStatus.PENDING).count();
 
-        double traditionalScore = (overdueRatio * 60) + ((avgDelayDays / 90) * 40);
+        // Feature 1: overdue ratio
+        double overdueRatio = totalInvoices > 0 ? (double) overdueCount / totalInvoices : 0.0;
+
+        // Feature 2: avg delay days
+        // Primary: from payments table if records exist
+        // Fallback: estimate from OVERDUE invoices using days past due date
+        double avgDelayDays = payments.stream()
+                .filter(p -> p.getDelayDays() != null && p.getDelayDays() > 0)
+                .mapToDouble(Payment::getDelayDays)
+                .average()
+                .orElseGet(() -> {
+                    // Fallback: calculate from OVERDUE invoices — days between due date and now
+                    return supplierInvoices.stream()
+                            .filter(i -> i.getStatus() == InvoiceStatus.OVERDUE && i.getDueDate() != null)
+                            .mapToDouble(i -> {
+                                long days = java.time.temporal.ChronoUnit.DAYS.between(
+                                        i.getDueDate(), java.time.LocalDate.now());
+                                return Math.max(days, 0);
+                            })
+                            .average()
+                            .orElse(0.0);
+                });
+
+        // Feature 3: pending ratio (by amount, not count — more accurate)
+        BigDecimal totalAmount = supplierInvoices.stream()
+                .map(Invoice::getAmount)
+                .filter(a -> a != null)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal pendingAmount = supplierInvoices.stream()
+                .filter(i -> i.getStatus() == InvoiceStatus.PENDING)
+                .map(Invoice::getAmount)
+                .filter(a -> a != null)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        double pendingRatio = totalAmount.compareTo(BigDecimal.ZERO) > 0
+                ? pendingAmount.divide(totalAmount, 4, RoundingMode.HALF_UP).doubleValue()
+                : (totalInvoices > 0 ? (double) pendingCount / totalInvoices : 0.0);
+
+        // Feature 4: payment frequency — invoices created per month over the invoice history window
+        // Use invoice dates instead of payments table since payments may be sparse
+        double paymentFrequency;
+        if (!supplierInvoices.isEmpty()) {
+            java.time.LocalDateTime earliest = supplierInvoices.stream()
+                    .map(Invoice::getCreatedAt)
+                    .filter(d -> d != null)
+                    .min(java.time.LocalDateTime::compareTo)
+                    .orElse(java.time.LocalDateTime.now().minusMonths(12));
+            long monthsSpan = java.time.temporal.ChronoUnit.MONTHS.between(
+                    earliest, java.time.LocalDateTime.now());
+            monthsSpan = Math.max(monthsSpan, 1); // avoid divide by zero
+            paymentFrequency = (double) supplierInvoices.size() / monthsSpan;
+        } else {
+            paymentFrequency = 0.0;
+        }
+
+        // Feature 5: neighbor avg risk (average risk score of connected buyers)
+        List<UUID> buyerIds = supplierInvoices.stream()
+                .map(i -> i.getBuyer().getId())
+                .distinct()
+                .toList();
+
+        double neighborAvgRisk = 0.0;
+        int neighborCount = 0;
+        for (UUID bId : buyerIds) {
+            riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(bId).ifPresent(rs -> {});
+            java.util.Optional<RiskScore> rs = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(bId);
+            if (rs.isPresent()) {
+                neighborAvgRisk += rs.get().getScore();
+                neighborCount++;
+            }
+        }
+        neighborAvgRisk = neighborCount > 0 ? neighborAvgRisk / neighborCount : 0.0;
+
+        // Feature 6: centrality score = unique buyers this supplier serves / total buyers in system
+        long totalBuyers = companyRepository.countByType(com.netcredix.jbackend.model.CompanyType.BUYER);
+        double centralityScore = totalBuyers > 0 ? (double) buyerIds.size() / totalBuyers : 0.0;
+
+        // Feature 7: stress velocity = overdue ratio - pending ratio (positive = worsening)
+        double stressVelocity = overdueRatio - pendingRatio;
+
+        // Feature 8: contagion score = neighbor avg risk × centrality
+        double contagionScore = neighborAvgRisk * centralityScore;
+
+        // Traditional score: 4 basic features weighted (mirrors what a bank would compute)
+        double traditionalScore = (overdueRatio * 40)
+                + (Math.min(avgDelayDays / 90.0, 1.0) * 30)
+                + (pendingRatio * 20)
+                + (Math.min(paymentFrequency / 10.0, 1.0) * 10);
         traditionalScore = Math.min(traditionalScore, 100.0);
 
+        // Network-aware score: from ML service or latest persisted score
         double networkAwareScore = traditionalScore;
         java.util.Optional<RiskScore> latestScoreOpt = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(companyId);
         if (latestScoreOpt.isPresent()) {
             networkAwareScore = latestScoreOpt.get().getScore();
         }
 
-        double difference = Math.abs(networkAwareScore - traditionalScore);
+        double difference    = Math.abs(networkAwareScore - traditionalScore);
         boolean underestimated = networkAwareScore > traditionalScore;
 
-        List<Invoice> supplierInvoices = invoiceRepository.findBySupplierId(companyId);
-        List<UUID> buyerIds = supplierInvoices.stream().map(i -> i.getBuyer().getId()).distinct().toList();
-
-        double neighborStressSum = 0;
-        int neighborCount = 0;
-        for (UUID bId : buyerIds) {
-            java.util.Optional<RiskScore> rs = riskScoreRepository.findFirstByCompanyIdOrderByCalculatedAtDesc(bId);
-            if (rs.isPresent()) {
-                neighborStressSum += rs.get().getScore();
-                neighborCount++;
-            }
-        }
-        double avgNeighborStress = neighborCount > 0 ? (neighborStressSum / neighborCount) / 100.0 : 0.0;
-
-        String conclusion;
-        if (underestimated) {
-            conclusion = String.format("Traditional method UNDERESTIMATES risk by %.1f points — network stress not captured", difference);
-        } else {
-            conclusion = String.format("Traditional method OVERESTIMATES risk by %.1f points", difference);
-        }
+        String conclusion = underestimated
+                ? String.format("Traditional method UNDERESTIMATES risk by %.1f points — network stress not captured", difference)
+                : String.format("Traditional method OVERESTIMATES risk by %.1f points", difference);
 
         return com.netcredix.jbackend.dto.ResearchComparisonResponse.builder()
                 .companyId(companyId)
                 .companyName(company.getName())
-                .traditionalScore(traditionalScore)
-                .networkAwareScore(networkAwareScore)
-                .difference(difference)
+                .traditionalScore(round2(traditionalScore))
+                .networkAwareScore(round2(networkAwareScore))
+                .difference(round2(difference))
                 .underestimated(underestimated)
                 .traditionalMethod("Based on individual payment history and overdue ratio only")
                 .networkAwareMethod("Includes upstream buyer stress, graph neighbor health, and network centrality")
                 .riskFactors(com.netcredix.jbackend.dto.ResearchComparisonResponse.RiskFactors.builder()
-                        .overdueRatio(overdueRatio)
-                        .avgDelayDays(avgDelayDays)
-                        .neighborStress(avgNeighborStress)
+                        .overdueRatio(round4(overdueRatio))
+                        .avgDelayDays(round1(avgDelayDays))
+                        .pendingRatio(round4(pendingRatio))
+                        .paymentFrequency(round1(paymentFrequency))
+                        .neighborAvgRisk(round1(neighborAvgRisk))
+                        .centralityScore(round4(centralityScore))
+                        .stressVelocity(round4(stressVelocity))
+                        .contagionScore(round1(contagionScore))
                         .build())
                 .conclusion(conclusion)
                 .paperReference("Tabachova et al. 2023 — underestimation of risk in supply chain networks confirmed")
                 .build();
     }
+
+    private double round1(double v) { return Math.round(v * 10.0) / 10.0; }
+    private double round2(double v) { return Math.round(v * 100.0) / 100.0; }
+    private double round4(double v) { return Math.round(v * 10000.0) / 10000.0; }
 }

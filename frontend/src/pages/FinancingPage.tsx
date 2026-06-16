@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { financingApi } from '../services/api';
+import api from '../services/api';
 import Sidebar from '../components/layout/Sidebar';
 import { formatINR } from '../utils/formatCurrency';
 import type { FinancingOffer } from '../types/api';
@@ -98,23 +99,75 @@ export default function FinancingPage() {
     o => o.status === 'ACCEPTED' || o.status === 'FUNDED'
   );
 
-  // Financiers don't use supplier financing options
+  // Financiers don't use supplier financing options — show their funded deals instead
   if (role === 'FINANCIER') {
+    const [fundedOffers, setFundedOffers] = useState<any[]>([]);
+    const [loadingOffers, setLoadingOffers] = useState(true);
+
+    useEffect(() => {
+      if (!companyId) return;
+      api.get(`/api/dashboard/financier/${companyId}`)
+        .then(res => {
+          const funded = res.data?.fundedDeals ?? [];
+          setFundedOffers(funded);
+        })
+        .catch(err => console.error('Failed to load financier offers:', err))
+        .finally(() => setLoadingOffers(false));
+    }, [companyId]);
+
     return (
       <div className="flex min-h-screen bg-navy">
         <Sidebar companyName={companyName} />
-        <main className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center max-w-md">
-            <div className="w-14 h-14 rounded-full bg-cyan/10 border border-cyan/30 flex items-center justify-center mx-auto mb-5">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" strokeWidth="2">
-                <line x1="12" y1="1" x2="12" y2="23"/>
-                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-              </svg>
+        <main className="flex-1 overflow-y-auto">
+          <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-border px-6 py-3">
+            <h1 className="text-text font-sans font-semibold text-base">Financing</h1>
+            <p className="text-muted text-xs font-mono">Deals funded by your institution</p>
+          </div>
+          <div className="px-6 py-6">
+            <div className="bg-surface border border-border rounded p-5">
+              <p className="text-cyan text-xs uppercase tracking-widest font-sans mb-1">Deals You Have Funded</p>
+              <p className="text-muted text-xs font-sans mt-0.5 mb-5">All financing deals funded by your institution</p>
+              {loadingOffers ? (
+                <div className="space-y-3">
+                  <div className="animate-pulse bg-border/60 rounded h-10" />
+                  <div className="animate-pulse bg-border/60 rounded h-10" />
+                </div>
+              ) : fundedOffers.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-muted font-mono text-sm">No funded deals yet</p>
+                  <p className="text-muted/60 text-xs font-sans mt-2">Fund deals from your dashboard to see them here</p>
+                </div>
+              ) : (
+                <table className="w-full text-left font-sans border-collapse">
+                  <thead>
+                    <tr className="border-b border-border text-muted text-xs uppercase tracking-wider">
+                      <th className="pb-3 font-medium px-2">Supplier</th>
+                      <th className="pb-3 font-medium px-2">Type</th>
+                      <th className="pb-3 font-medium text-right px-2">Amount</th>
+                      <th className="pb-3 font-medium text-right px-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fundedOffers.map((offer: any) => (
+                      <tr key={offer.id} className="border-b border-border/30 last:border-0 hover:bg-cyan/5 transition-colors">
+                        <td className="py-3 px-2 text-text text-sm font-medium">{offer.supplierName ?? 'Supplier'}</td>
+                        <td className="py-3 px-2">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded border text-amber border-amber bg-amber/10">
+                            {offer.type?.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="py-3 px-2 text-right font-mono text-sm text-cyan">{formatINR(offer.amount)}</td>
+                        <td className="py-3 px-2 text-right">
+                          <span className="text-xs font-mono text-success border border-success/30 bg-success/10 px-2 py-0.5 rounded">
+                            ✅ FUNDED
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
-            <h2 className="text-cyan font-sans font-semibold text-xl mb-3">Financing Deals You're Offering</h2>
-            <p className="text-muted font-sans text-sm leading-relaxed">
-              View and manage financing requests from your dashboard.
-            </p>
           </div>
         </main>
       </div>
@@ -199,7 +252,7 @@ export default function FinancingPage() {
                     <th className="px-4 py-3 font-medium">Offer Amount</th>
                     <th className="px-4 py-3 font-medium">Cost</th>
                     <th className="px-4 py-3 font-medium">Speed</th>
-                    <th className="px-4 py-3 font-medium">Match Score</th>
+                    <th className="px-4 py-3 font-medium">SUITABILITY</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     {role === 'SUPPLIER' && <th className="px-4 py-3 font-medium">Action</th>}
                   </tr>
@@ -252,7 +305,11 @@ export default function FinancingPage() {
                                 <div className={`h-full rounded-full ${routeColor(score)}`}
                                   style={{ width: `${Math.min(score * 100, 100)}%` }}/>
                               </div>
-                              <span className="font-mono text-xs text-text">{score.toFixed(2)}</span>
+                              {(() => {
+                                if (score >= 0.6) return <span className="text-success font-sans text-xs font-medium">⭐ Best Fit</span>;
+                                if (score >= 0.4) return <span className="text-amber font-sans text-xs font-medium">✓ Good Fit</span>;
+                                return <span className="text-muted font-sans text-xs font-medium">Fair Fit</span>;
+                              })()}
                             </div>
                           </td>
                           <td className="px-4 py-3">

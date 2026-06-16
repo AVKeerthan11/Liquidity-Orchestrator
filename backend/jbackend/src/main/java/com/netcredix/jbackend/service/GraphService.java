@@ -226,8 +226,35 @@ public class GraphService {
                 }
             }
 
+            // Enrich supplier nodes with invoice stats scoped to this buyer
+            UUID buyerUUID;
+            try { buyerUUID = UUID.fromString(companyId); } catch (Exception e) { buyerUUID = null; }
+            final UUID resolvedBuyerId = buyerUUID;
+
+            List<CytoscapeNode> nodes = new java.util.ArrayList<>(nodeMap.values());
+            for (CytoscapeNode node : nodes) {
+                if (!"SUPPLIER".equals(node.getData().getType())) continue;
+                try {
+                    UUID nid = UUID.fromString(node.getData().getId());
+                    List<com.netcredix.jbackend.model.Invoice> invoices = resolvedBuyerId != null
+                            ? invoiceRepository.findBySupplierIdAndBuyerId(nid, resolvedBuyerId)
+                            : invoiceRepository.findBySupplierId(nid);
+                    double pending = invoices.stream()
+                            .filter(i -> i.getStatus() == InvoiceStatus.PENDING)
+                            .mapToDouble(i -> i.getAmount().doubleValue()).sum();
+                    double overdue = invoices.stream()
+                            .filter(i -> i.getStatus() == InvoiceStatus.OVERDUE)
+                            .mapToDouble(i -> i.getAmount().doubleValue()).sum();
+                    node.getData().setPendingAmount(pending);
+                    node.getData().setOverdueAmount(overdue);
+                    node.getData().setInvoiceCount(invoices.size());
+                } catch (Exception e) {
+                    log.warn("=== NEO4J: Could not enrich node {} - {}", node.getData().getId(), e.getMessage());
+                }
+            }
+
             return CytoscapeResponse.builder()
-                    .nodes(new java.util.ArrayList<>(nodeMap.values()))
+                    .nodes(nodes)
                     .edges(new java.util.ArrayList<>(edgeMap.values()))
                     .build();
         } catch (Exception e) {

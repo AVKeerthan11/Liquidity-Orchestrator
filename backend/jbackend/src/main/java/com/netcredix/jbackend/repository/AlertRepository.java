@@ -13,14 +13,14 @@ import java.util.UUID;
 @Repository
 public interface AlertRepository extends JpaRepository<Alert, UUID> {
 
-    @Query("SELECT a FROM Alert a WHERE a.company.id = :companyId ORDER BY " +
-           "CASE a.severity " +
-           "WHEN com.netcredix.jbackend.model.AlertSeverity.CRITICAL THEN 1 " +
-           "WHEN com.netcredix.jbackend.model.AlertSeverity.HIGH THEN 2 " +
-           "WHEN com.netcredix.jbackend.model.AlertSeverity.MEDIUM THEN 3 " +
-           "WHEN com.netcredix.jbackend.model.AlertSeverity.LOW THEN 4 " +
-           "ELSE 5 END ASC")
+    @Query(value = "SELECT * FROM alerts WHERE company_id = :companyId " +
+           "ORDER BY CASE severity " +
+           "WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 WHEN 'LOW' THEN 4 ELSE 5 END ASC",
+           nativeQuery = true)
     List<Alert> findByCompanyIdOrderBySeverityDesc(@Param("companyId") UUID companyId);
 
-    Optional<Alert> findByCompanyIdAndMessage(UUID companyId, String message);
+    @Query("SELECT a FROM Alert a WHERE a.company.id = :companyId AND a.message = :message")
+    Optional<Alert> findByCompanyIdAndMessage(@Param("companyId") UUID companyId, @Param("message") String message);
+
+    void deleteByCompanyId(UUID companyId);
 }

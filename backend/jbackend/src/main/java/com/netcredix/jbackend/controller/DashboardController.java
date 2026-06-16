@@ -33,6 +33,6 @@ public class DashboardController {
     @GetMapping("/financier/{companyId}")
     @PreAuthorize("hasAnyRole('SUPPLIER', 'BUYER', 'FINANCIER', 'ADMIN')")
     public ResponseEntity<FinancierDashboardResponse> getFinancierDashboard(@PathVariable UUID companyId) {
-        return ResponseEntity.ok(dashboardService.getFinancierDashboard());
+        return ResponseEntity.ok(dashboardService.getFinancierDashboard(companyId));
     }
 }

@@ -129,7 +129,7 @@ export interface ActiveOffer {
   supplierId: string;
   type: 'EARLY_PAYMENT' | 'INVOICE_DISCOUNTING' | 'MICRO_CREDIT';
   amount: number;
-  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'FUNDED';
 }
 
 export interface CoalitionFinancier {
@@ -152,6 +152,8 @@ export interface FinancierDashboardData {
   averageRiskScore: number;
   totalOpportunities: number;
   activeOffers: ActiveOffer[];
+  fundedDeals: ActiveOffer[];
+  fundedDealsCount: number;
   coalition: FinancierCoalition | null;
 }
 
@@ -169,6 +171,8 @@ export interface SimulationResult {
   targetCompany: string;
   impactedCompanies: ImpactedCompany[];
   totalFinancialExposure: number;
+  totalFinancialImpact: number;
+  riskScoreIncrease: number | null;
   cascadeDepth: string;
   networkResilienceScore: number;
   recommendation: string;
@@ -210,7 +214,12 @@ export interface ResearchComparisonResponse {
   riskFactors: {
     overdueRatio: number;
     avgDelayDays: number;
-    neighborStress: number;
+    pendingRatio: number;
+    paymentFrequency: number;
+    neighborAvgRisk: number;
+    centralityScore: number;
+    stressVelocity: number;
+    contagionScore: number;
   };
   conclusion: string;
   paperReference: string;

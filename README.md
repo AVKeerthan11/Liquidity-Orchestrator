@@ -2,7 +2,7 @@
 
 
 //My device(AV)
-set "JAVA_HOME=C:\Program Files\Java" && mvnw.cmd spring-boot:run
+set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot" && cd C:\Liquidity-Orchestrator\backend\jbackend && mvnw.cmd spring-boot:run
 $env:JAVA_HOME="C:\Program Files\Java"; .\mvnw.cmd spring-boot:run
 
 
