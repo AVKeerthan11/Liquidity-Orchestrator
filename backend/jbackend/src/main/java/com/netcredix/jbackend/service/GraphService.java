@@ -226,7 +226,6 @@ public class GraphService {
                 }
             }
 
-<<<<<<< HEAD
             // Enrich supplier nodes with invoice stats scoped to this buyer
             UUID buyerUUID;
             try { buyerUUID = UUID.fromString(companyId); } catch (Exception e) { buyerUUID = null; }
@@ -253,10 +252,6 @@ public class GraphService {
                     log.warn("=== NEO4J: Could not enrich node {} - {}", node.getData().getId(), e.getMessage());
                 }
             }
-=======
-            // Enrich nodes with invoice data from PostgreSQL
-            enrichNodesWithInvoiceData(nodeMap, companyId);
->>>>>>> 2046073 (devops)
 
             return CytoscapeResponse.builder()
                     .nodes(nodes)

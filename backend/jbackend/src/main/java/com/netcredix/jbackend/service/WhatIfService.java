@@ -49,76 +49,11 @@ public class WhatIfService {
         };
     }
 
-<<<<<<< HEAD
     private UUID resolveTarget(WhatIfRequest request) {
         if (request.getTargetCompanyId() != null) return request.getTargetCompanyId();
         if (request.getSupplierId()       != null) return request.getSupplierId();
         if (request.getBuyerId()          != null) return request.getBuyerId();
         throw new IllegalArgumentException("targetCompanyId is required");
-=======
-    // ── PAYMENT_DELAY ──────────────────────────────────────────────────────────
-
-    private WhatIfResponse simulatePaymentDelay(WhatIfRequest request) {
-        int delayDays = request.getDelayDays() != null ? request.getDelayDays() : 30;
-
-        // Use eager-fetch query to avoid LazyInitializationException on supplier/buyer
-        List<Invoice> buyerInvoices = invoiceRepository
-                .findByCompanyIdWithCompanies(request.getBuyerId());
-
-        Map<UUID, List<Invoice>> pendingBySupplier = buyerInvoices.stream()
-                .filter(i -> i.getBuyer().getId().equals(request.getBuyerId()))
-                .filter(i -> i.getStatus() == InvoiceStatus.PENDING)
-                .collect(Collectors.groupingBy(i -> i.getSupplier().getId()));
-
-        List<WhatIfResponse.SupplierImpact> impacts = new ArrayList<>();
-        double totalImpact = 0.0;
-
-        for (Map.Entry<UUID, List<Invoice>> entry : pendingBySupplier.entrySet()) {
-            UUID supplierId   = entry.getKey();
-            List<Invoice> invoices = entry.getValue();
-
-            String supplierName = invoices.get(0).getSupplier().getName();
-            double pendingAmount = invoices.stream()
-                    .map(Invoice::getAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add)
-                    .doubleValue();
-
-            double currentScore   = latestScore(supplierId);
-            double projectedScore = Math.min(currentScore + (delayDays * 0.5), 100.0);
-            boolean wouldFail     = projectedScore > CRITICAL_THRESHOLD;
-
-            // Include all pending amounts in total impact (money at risk)
-            totalImpact += pendingAmount;
-
-            impacts.add(WhatIfResponse.SupplierImpact.builder()
-                    .supplierId(supplierId)
-                    .supplierName(supplierName)
-                    .currentScore(round(currentScore))
-                    .projectedScore(round(projectedScore))
-                    .wouldFail(wouldFail)
-                    .pendingAmount(round(pendingAmount))
-                    .build());
-        }
-
-        impacts.sort(Comparator.comparingDouble(WhatIfResponse.SupplierImpact::getProjectedScore).reversed());
-
-        int criticalCount = (int) impacts.stream().filter(WhatIfResponse.SupplierImpact::getWouldFail).count();
-        double r0         = calculateProjectedR0(impacts, request.getBuyerId());
-        String cascadeRisk = cascadeRisk(r0, criticalCount, impacts.size());
-
-        return WhatIfResponse.builder()
-                .scenarioType("PAYMENT_DELAY")
-                .buyerId(request.getBuyerId())
-                .delayDays(delayDays)
-                .affectedSuppliers(impacts.size())
-                .criticalSuppliers(criticalCount)
-                .totalFinancialImpact(round(totalImpact))
-                .cascadeRisk(cascadeRisk)
-                .r0AfterScenario(round(r0))
-                .supplierDetails(impacts)
-                .recommendation(buildRecommendation("PAYMENT_DELAY", criticalCount, r0, delayDays))
-                .build();
->>>>>>> 2046073 (devops)
     }
 
     // ── SUPPLIER_FAILURE ───────────────────────────────────────────────────────
@@ -410,7 +345,6 @@ public class WhatIfService {
                     .map(Invoice::getAmount)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-<<<<<<< HEAD
             double buyerDependency = theirTotalInvoices.compareTo(BigDecimal.ZERO) > 0
                     ? theirBuyerInvoices.divide(theirTotalInvoices, 4, RoundingMode.HALF_UP).doubleValue()
                     : 0.0;
@@ -431,10 +365,6 @@ public class WhatIfService {
                                 || inv.getStatus() == InvoiceStatus.OVERDUE)
                     .map(Invoice::getAmount)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
-=======
-            // Include all pending amounts in total impact (money at risk)
-            totalImpact += pendingAmount;
->>>>>>> 2046073 (devops)
 
             impacts.add(WhatIfResponse.SupplierImpact.builder()
                     .supplierId(supplierId)
